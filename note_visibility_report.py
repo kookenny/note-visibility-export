@@ -475,6 +475,35 @@ def _collect_checklist_ids_from_cond(cond: dict, ids: set) -> None:
 
 # ── TREE BUILDING ─────────────────────────────────────────────────────────────
 
+# Section types that are structural containers, not user-visible content levels
+_CONTAINER_TYPES = {"heading", "note", "settings", "toc"}
+
+def get_ancestor_chain(section: dict, by_id: dict) -> list:
+    """
+    Return the full list of titled ancestor titles from the root down to
+    (and including) this section, excluding structural container sections
+    (type in _CONTAINER_TYPES), e.g.:
+      ["Summary of accounting policies", "Basis of accounting",
+       "Basis of Accounting - no cash flow"]
+    """
+    chain = []
+    current = section
+    visited: set = set()
+    while current:
+        sid = current.get("id", "")
+        if sid in visited:
+            break
+        visited.add(sid)
+        sec_type = current.get("type", "")
+        title = (current.get("title") or current.get("titles", {}).get("en", "") or "").strip()
+        if title and sec_type not in _CONTAINER_TYPES:
+            chain.append(title)
+        parent_id = current.get("parent", "")
+        current = by_id.get(parent_id)
+    chain.reverse()
+    return chain
+
+
 def get_title(section: dict) -> str:
     """Return the display title of a section, trying multiple field names."""
     return (section.get("title")
@@ -485,7 +514,8 @@ def get_title(section: dict) -> str:
 def find_nearest_titled_ancestor(section: dict, by_id: dict) -> Optional[dict]:
     """
     Walk up the parent chain and return the first ancestor that has a
-    non-empty title.  Returns None if no titled ancestor exists in the set.
+    non-empty title AND is not a structural container type.
+    Returns None if no such ancestor exists.
     """
     seen = {section.get("id", "")}
     parent_id = section.get("parent", "")
@@ -494,7 +524,7 @@ def find_nearest_titled_ancestor(section: dict, by_id: dict) -> Optional[dict]:
             break
         seen.add(parent_id)
         parent = by_id[parent_id]
-        if get_title(parent):
+        if get_title(parent) and parent.get("type", "") not in _CONTAINER_TYPES:
             return parent
         parent_id = parent.get("parent", "")
     return None
@@ -502,8 +532,10 @@ def find_nearest_titled_ancestor(section: dict, by_id: dict) -> Optional[dict]:
 
 def ordered_titled_sections(sections: list[dict]) -> list[dict]:
     """
-    Return all sections that have a non-empty title, sorted so that
-    parents always appear before their children (topological + order sort).
+    Return all content sections (non-container types) that have a non-empty
+    title, sorted so that parents always appear before their children.
+    Container types (note, heading, settings, toc) are excluded — their
+    visibility is duplicated on the child content sections.
     """
     by_id    = {s["id"]: s for s in sections}
     id_set   = set(by_id)
@@ -524,7 +556,7 @@ def ordered_titled_sections(sections: list[dict]) -> list[dict]:
     result: list[dict] = []
 
     def visit(s):
-        if get_title(s):
+        if get_title(s) and s.get("type", "") not in _CONTAINER_TYPES:
             result.append(s)
         for child in sorted(children.get(s["id"], []), key=sort_key):
             visit(child)
@@ -640,14 +672,16 @@ def parse_visibility(section: dict,
 def section_rows(template_name: str,
                  section: dict,
                  by_id: dict,
+                 children_by_parent: dict,
                  note_counter: dict,
                  lookup: dict,
                  debug: bool) -> list[VisibilityRow]:
     """
     Build VisibilityRow objects for a single titled section.
-    Finds the nearest titled ancestor to use as Note Title;
+    Finds the nearest non-container titled ancestor to use as Note Title;
     the section itself becomes Subnote Title.
-    If no titled ancestor exists, the section is the note (Subnote Title blank).
+    If no such ancestor exists, the section is the note (Subnote Title blank).
+    Content from untitled child sections (Text/body) is merged into Column F.
     """
     ancestor  = find_nearest_titled_ancestor(section, by_id)
     sec_title = get_title(section)
@@ -671,6 +705,16 @@ def section_rows(template_name: str,
 
     raw_html = (section.get("specification") or {}).get("content", "")
     content  = strip_html(raw_html)
+
+    # Merge content from untitled child sections (Heading → Text pattern)
+    untitled_children = sorted(
+        [c for c in children_by_parent.get(section["id"], []) if not get_title(c)],
+        key=lambda s: s.get("order", ""),
+    )
+    for child in untitled_children:
+        child_text = strip_html((child.get("specification") or {}).get("content", ""))
+        if child_text:
+            content = f"{content}\n{child_text}".strip() if content else child_text
 
     vis_rows = parse_visibility(section, lookup=lookup, debug=debug)
     result   = []
@@ -968,6 +1012,13 @@ def main() -> None:
         note_counter: dict = {}
         log.info("  %d titled sections found", len(titled))
 
+        # Map parent id → all child sections (including untitled Text/body sections)
+        children_by_parent: dict = {}
+        for s in sections:
+            pid = s.get("parent", "")
+            if pid in by_id:
+                children_by_parent.setdefault(pid, []).append(s)
+
         # Build lookup: fetch each condition ID individually to resolve to names
         lookup: dict = {}
         if not args.mock:
@@ -975,7 +1026,7 @@ def main() -> None:
             log.info("  %d names resolved", len(lookup))
 
         for sec in titled:
-            all_rows.extend(section_rows(template_name, sec, by_id, note_counter, lookup, args.debug))
+            all_rows.extend(section_rows(template_name, sec, by_id, children_by_parent, note_counter, lookup, args.debug))
 
     if not all_rows:
         sys.exit("No data collected. Check your template configuration and cookies.")
