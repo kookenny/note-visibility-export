@@ -191,6 +191,38 @@ def fetch_sections(session: requests.Session,
     return []
 
 
+def fetch_document_lookup(session: requests.Session, engagement_id: str) -> dict:
+    """
+    Fetch all documents in the engagement and return {id: "number name"} map.
+    e.g. {"z2HFA1b5TIqLNYrLsb55ZA": "6-15 Financial statements optimiser"}
+    """
+    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/document/get"
+    try:
+        resp = session.post(url, json={}, timeout=30)
+        if not resp.ok:
+            return {}
+        data = resp.json()
+        documents = data.get("objects", [])
+        result = {}
+        for doc in documents:
+            did    = doc.get("id", "")
+            number = doc.get("number", "")
+            names  = doc.get("names") or {}
+            name   = names.get("en", "") or doc.get("name", "")
+            content = doc.get("content", "")
+            if did:
+                label = f"{number} {name}".strip() if number else name
+                result[did] = label
+                # checklistId in conditions points to the document's content ID, not its own ID
+                if content:
+                    result[content] = label
+        log.info("  %d documents fetched for name lookup", len(result))
+        return result
+    except Exception as exc:
+        log.warning("Could not fetch document list: %s", exc)
+        return {}
+
+
 def fetch_procedures_for_checklist(session: requests.Session,
                                    engagement_id: str,
                                    checklist_id: str) -> list[dict]:
@@ -234,6 +266,104 @@ def fetch_procedure_by_id(session: requests.Session,
         return None
 
 
+def fetch_checklist_name(session: requests.Session,
+                         engagement_id: str,
+                         checklist_id: str) -> str:
+    """
+    Try to resolve a checklist ID to its human-readable name.
+    Tries multiple strategies in order:
+    0. Fetch the checklist as a procedure by its own ID (most reliable)
+    1. Fetch the checklist object as a section by ID
+    2. Walk up the procedure parentId chain to find the root title
+    Returns empty string if not resolved.
+    """
+    # Strategy 0: the checklist IS a procedure — fetch it directly by its own ID
+    proc = fetch_procedure_by_id(session, engagement_id, checklist_id)
+    if proc:
+        summary = proc.get("summaryNames") or {}
+        name = summary.get("en", "") or next(iter(summary.values()), "")
+        if not name:
+            name = strip_html(proc.get("text", ""))
+        if name:
+            number = proc.get("number", "")
+            return f"{number} {name}".strip() if number else name
+
+    # Strategy 1a: fetch it as a document (document/get by id)
+    for endpoint in ("document/get", "checklist/get", "workpaper/get"):
+        url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/{endpoint}"
+        for payload in (
+            {"filter": {"filter": {"node": "=",
+                "left": {"node": "field", "kind": endpoint.split("/")[0], "field": "id"},
+                "right": {"node": "string", "value": checklist_id}}}},
+            {"id": checklist_id},
+        ):
+            try:
+                resp = session.post(url, json=payload, timeout=10)
+                if not resp.ok:
+                    continue
+                data = resp.json()
+                # Unwrap objects list or single object
+                objects = data.get("objects") or []
+                if not objects and "object" in data:
+                    objects = [data["object"]]
+                if not objects and "id" in data:
+                    objects = [data]
+                for obj in objects:
+                    # Try 'name', 'title', 'titles', 'description' fields
+                    for field in ("name", "names", "title", "titles", "description"):
+                        val = obj.get(field)
+                        if isinstance(val, dict):
+                            val = val.get("en", "") or next(iter(val.values()), "")
+                        if val and isinstance(val, str):
+                            return val.strip()
+            except Exception:
+                continue
+
+    # Strategy 1b: fetch it as a section by id field filter
+    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/section/get"
+    payload = {"filter": {"filter": {
+        "node": "=",
+        "left":  {"node": "field", "kind": "section", "field": "id"},
+        "right": {"node": "string", "value": checklist_id},
+    }}}
+    try:
+        resp = session.post(url, json=payload, timeout=10)
+        if resp.ok:
+            data = resp.json()
+            objects = data.get("objects", [])
+            if objects:
+                title = get_title(objects[0])
+                if title:
+                    return title
+    except Exception:
+        pass
+
+    # Strategy 2: walk up the procedure parentId chain
+    procs = fetch_procedures_for_checklist(session, engagement_id, checklist_id)
+    if not procs:
+        return ""
+
+    seen = set()
+    current = procs[0]
+    while True:
+        parent_id = current.get("parentId", "")
+        if not parent_id or parent_id in seen:
+            break
+        seen.add(parent_id)
+        parent = fetch_procedure_by_id(session, engagement_id, parent_id)
+        if not parent:
+            break
+        if parent.get("checklistId", "") != checklist_id:
+            break
+        current = parent
+
+    summary = current.get("summaryNames") or {}
+    name = summary.get("en", "") or next(iter(summary.values()), "")
+    if not name:
+        name = strip_html(current.get("text", ""))
+    return name
+
+
 def build_id_lookup(session: requests.Session,
                     engagement_id: str,
                     sections: list[dict]) -> dict:
@@ -251,23 +381,51 @@ def build_id_lookup(session: requests.Session,
             _collect_procedure_ids_from_cond(cond, procedure_ids)
 
     log.info("  %d unique procedure ID(s) to resolve", len(procedure_ids))
-    lookup: dict = {}
 
-    # Also collect checklist IDs so we can label condition groups
+    # Fetch all documents once — covers checklist name resolution
+    doc_lookup = fetch_document_lookup(session, engagement_id)
+    lookup: dict = dict(doc_lookup)  # seed with document names
+
+    # Collect checklist IDs and resolve their names for the Condition Group column
     checklist_ids: set = set()
     for s in sections:
         for cond in (s.get("visibility") or {}).get("conditions") or []:
             _collect_checklist_ids_from_cond(cond, checklist_ids)
 
-    # Fetch one procedure per checklist to get the checklist title from its parent
+    # Build a quick index of sections by their 'document' field —
+    # some sections have document = checklist_id when they belong to that checklist doc
+    sections_by_doc: dict = {}
+    for s in sections:
+        doc_id = s.get("document", "")
+        if doc_id:
+            sections_by_doc.setdefault(doc_id, []).append(s)
+
+    log.info("  Resolving %d checklist name(s) ...", len(checklist_ids))
     for cid in checklist_ids:
-        procs = fetch_procedures_for_checklist(session, engagement_id, cid)
-        # The checklist name comes from the first procedure's parentId title —
-        # store the checklist ID mapped to a short label for condition group display
-        if procs:
-            # Use the checklistId itself as key; value comes from the checklist section
-            # We'll try to find it in sections already fetched
-            pass  # resolved below from procedure fetches
+        # Skip if already resolved from fetch_document_lookup (e.g. "6-15 Financial statements optimiser")
+        if cid in lookup:
+            log.debug("  Checklist %s → '%s' (from document lookup)", cid[:12], lookup[cid])
+            continue
+        # Strategy 0: look for a section in already-fetched sections whose id = checklist_id
+        # or whose document field = checklist_id and has a title
+        name = ""
+        # Check sections whose document matches this checklist
+        for s in sections_by_doc.get(cid, []):
+            t = get_title(s)
+            if t:
+                name = t
+                break
+        # Check if any fetched section has id = checklist_id
+        if not name:
+            for s in sections:
+                if s.get("id") == cid and get_title(s):
+                    name = get_title(s)
+                    break
+        if not name:
+            name = fetch_checklist_name(session, engagement_id, cid)
+        if name:
+            lookup[cid] = name
+            log.debug("  Checklist %s → '%s'", cid[:12], name)
 
     for idx, pid in enumerate(procedure_ids, start=1):
         proc = fetch_procedure_by_id(session, engagement_id, pid)
@@ -393,6 +551,11 @@ def _resolve(lookup: dict, id_obj) -> str:
     return lookup.get(raw_id, raw_id[:12])   # fall back to first 12 chars of ID
 
 
+def _resolve_with_id(lookup: dict, id_obj) -> str:
+    """Resolve an id-object to its human-readable name for display in column I."""
+    return _resolve(lookup, id_obj)
+
+
 def _flatten_conditions(conditions: list, lookup: dict,
                         group_label: str = "") -> list[tuple]:
     """
@@ -406,7 +569,7 @@ def _flatten_conditions(conditions: list, lookup: dict,
         ctype = cond.get("type", "")
 
         if ctype == "response":
-            checklist = _resolve(lookup, cond.get("checklistId"))
+            checklist = _resolve_with_id(lookup, cond.get("checklistId"))
             procedure = _resolve(lookup, cond.get("procedureId"))
             response  = _resolve(lookup, cond.get("responseId"))
             rows.append((group_label or checklist, procedure, response))
@@ -417,7 +580,7 @@ def _flatten_conditions(conditions: list, lookup: dict,
             # Derive a group label from the checklist of the first nested condition
             first_checklist = ""
             if nested:
-                first_checklist = _resolve(lookup, nested[0].get("checklistId"))
+                first_checklist = _resolve_with_id(lookup, nested[0].get("checklistId"))
             label = f"Condition Group {group_counter[0]}: {first_checklist}".strip(": ")
             rows.extend(_flatten_conditions(nested, lookup, group_label=label))
 
@@ -649,19 +812,33 @@ def probe_endpoints(session: requests.Session, engagement_id: str) -> None:
                 "left": {"node": "field", "kind": kind, "field": field},
                 "right": {"node": "string", "value": value}}}}
 
-    # First: print the full procedure object for our known procedure ID
-    url = f"{base}/procedure/get"
-    payload = mk_filter("procedure", "id", known_procedure_id)
-    resp = session.post(url, json=payload, timeout=10)
-    print(f"\n=== PROCEDURE FETCH (status={resp.status_code}) ===")
-    if resp.ok:
-        data = resp.json()
-        objects = data.get("objects", [])
-        obj = objects[0] if objects else {}
-        print(json.dumps(obj, indent=2)[:4000])
-    else:
-        print(resp.text[:500])
-    print("===================================\n")
+    # Probe document/get for the known checklist ID
+    print("\n=== DOCUMENT/GET for checklist ID ===")
+    for path in ("document/get",):
+        url = f"{base}/{path}"
+        for payload in (
+            mk_filter("document", "id", known_checklist_id),
+            {"id": known_checklist_id},
+            {},
+        ):
+            resp = session.post(url, json=payload, timeout=10)
+            try:
+                data = resp.json()
+            except Exception:
+                print(f"  {resp.status_code} {path} payload={list(payload.keys())} — not JSON")
+                continue
+            count = data.get("count", "?") if isinstance(data, dict) else "?"
+            print(f"  {resp.status_code} {path} payload={list(payload.keys())} count={count}")
+            objects = data.get("objects", []) if isinstance(data, dict) else []
+            if objects:
+                obj = objects[0]
+                print(f"    keys: {list(obj.keys())[:12]}")
+                for f in ("name", "names", "title", "titles", "description", "label"):
+                    v = obj.get(f)
+                    if v:
+                        print(f"    {f}: {str(v)[:120]}")
+                break
+    print("=====================================\n")
 
     # Try fetching the FSO checklist as a document via section/get
     print("=== CHECKLIST AS DOCUMENT (section/get) ===")

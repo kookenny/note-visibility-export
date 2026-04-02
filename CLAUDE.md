@@ -23,7 +23,14 @@ Each section object returned by the API has:
 - `visibility.override` — `"default"` | `"show"` | `"hide"`
 - `visibility.normallyVisible` — boolean
 - `visibility.allConditionsNeeded` — AND (true) / OR (false) logic
-- `visibility.conditions` — array of condition objects (structure TBD; use `--debug` to inspect live data)
+- `visibility.conditions` — array of condition objects; contains flat `response` objects and `condition_group` objects (nested OR groups)
+
+## Python Installation
+The Python executable is at:
+```
+C:\Users\Kenny\AppData\Local\Programs\Python\Python314\python.exe
+```
+Use this full path when running from bash (e.g. in Claude Code terminal), as `python` / `python3` / `py` are not on the bash PATH. PowerShell can use `python` directly.
 
 ## Running the Script
 ```powershell
@@ -65,9 +72,13 @@ Conditions reference `checklistId`, `procedureId`, `responseId`. Resolution appr
 - **Endpoint:** `POST /api/v1.12.0/procedure/get` filtered by `field: "id"`
 - **Procedure name:** `summaryNames.en` or strip HTML from `text` field
 - **Response options (Yes/No etc.):** embedded in `settings.responseSets[].responses[]` on the procedure object — each has `id` and `name`
-- **Checklist name (condition group label):** fetched via `fetch_procedures_for_checklist()` using `checklistId` filter on `procedure/get`
+- **Checklist name (condition group label):** the `checklistId` is itself a procedure ID — fetch it via `procedure/get` filtered by `field: "id"` and read `summaryNames.en` or strip HTML from `text`. Do NOT walk up the `parentId` chain (that returns an ancestor's name, not the checklist's own name).
 
 Key finding: `responseRows` on a procedure has no text — response labels come from `settings.responseSets`, NOT `responseRows`.
+
+Key finding: `checklistId` values from conditions are NOT document IDs — they are procedure IDs. `document/get` returns a separate namespace and cannot resolve them.
+
+Key finding: `checklistId.id` in conditions points to the **content ID** of the checklist document, not the document's own `id`. The document object has a `content` field whose value matches the `checklistId`. Resolution: `fetch_document_lookup()` indexes both `doc["id"]` and `doc["content"]` → label, so both map to `"number name"` (e.g. `"6-15 Financial statements optimiser"`).
 
 The `build_id_lookup()` function fetches every unique `procedureId` individually and builds a flat `{id: name}` dict covering both procedure names and response option names.
 
@@ -82,6 +93,6 @@ The `build_id_lookup()` function fetches every unique `procedureId` individually
 | F | Section Content | `specification.content` stripped of HTML |
 | G | Visibility Setting | `visibility.override` |
 | H | Visibility Behavior | derived from override + normallyVisible |
-| I | Condition Group | checklist name (unresolved — shows ID prefix) |
-| J | Condition Name | procedure name (unresolved — shows ID prefix) |
-| K | Expected Response | response name (unresolved — shows ID prefix) |
+| I | Condition Group | checklist name resolved via `procedure/get` by checklist ID |
+| J | Condition Name | procedure name from `summaryNames.en` or stripped `text` |
+| K | Expected Response | response label from `settings.responseSets[].responses[]` |
