@@ -10,14 +10,14 @@ tools/              # Python scripts
 workflows/          # SOPs
   export_note_visibility.md
 .tmp/               # Output files (gitignored, regenerated as needed)
-.env                # CW_COOKIES (gitignored — expires each session)
+.env                # CW_CLIENT_ID, CW_CLIENT_SECRET (OAuth) or CW_COOKIES (gitignored)
 ```
 
 See [workflows/export_note_visibility.md](workflows/export_note_visibility.md) for step-by-step run instructions.
 
 ## API Details
 - **Platform:** CaseWare Cloud (internal), hosted at `https://ca.cwcloudpartner.com`
-- **Auth:** Cookie-based (JSESSIONID + secid from browser session) — **not** OAuth
+- **Auth:** OAuth client credentials (preferred, 30-min token) or cookie-based (JSESSIONID + secid fallback)
 - **Main endpoint:** `POST /{tenant}/e/eng/{engagementId}/api/v1.12.0/section/get`
 - **Filter pattern to fetch all sections for a document:**
   ```json
@@ -33,6 +33,7 @@ Each section object returned by the API has:
 - `visibility.normallyVisible` — boolean
 - `visibility.allConditionsNeeded` — AND (true) / OR (false) logic
 - `visibility.conditions` — array of condition objects; contains flat `response` objects and `condition_group` objects (nested OR groups)
+- `tagging.component` — `{categoryId: [tagId, ...]}` mapping; tag names resolved via `tag/get` endpoint (tags with `subKind: "component"`)
 
 ## Python Installation
 The Python executable location depends on the machine. Known locations:
@@ -87,12 +88,13 @@ Key finding: Visibility conditions primarily live on `[note]` container sections
 Key finding: The Hide/Show direction is derived from `visibility.normallyVisible`, NOT from `visibility.override`. `normallyVisible=false` → "Show when" (normally hidden, shows when conditions met; 418/420 note sections); `normallyVisible=true` → "Hide when" (normally visible, hides when conditions met). The `override` field is almost always `"default"` when conditions are present.
 
 ## Confirmed Working
-- Auth: full browser cookie string sent as `Cookie` request header via `CW_COOKIES` env var
+- Auth: OAuth via `CW_CLIENT_ID` + `CW_CLIENT_SECRET` (preferred), falls back to browser cookie string via `CW_COOKIES`
 - Main endpoint: `POST /api/v1.12.0/section/get` with document filter returns `{"count": N, "objects": [...]}`
 - Section hierarchy: container types (`note`, `heading`, `settings`, `toc`) excluded from `ordered_titled_sections()`; `find_nearest_titled_ancestor()` also skips container types
-- Section content: extracted from `specification.content` HTML field, stripped to plain text; untitled child sections (text bodies) are merged into the parent section's content column
+- Section content: extracted from `specification.content` HTML field, stripped to plain text; placeholder spans wrapped in `(( ))`; dynamic-text formula spans resolved via section attachables and wrapped in `[[ ]]`; untitled child sections (text bodies) are merged into the parent section's content column
 - Visibility settings: `_effective_visibility()` walks up parent chain to inherit conditions from `[note]` containers; Hide/Show direction derived from `normallyVisible` (false→"Hide when", true→"Show when"); `override` field rarely set to anything other than `"default"`
 - Condition structure confirmed: top-level `conditions` array contains flat `response` objects and `condition_group` objects (nested OR groups)
+- Components: `section.tagging.component` maps `{categoryId: [tagId]}` → resolved via `tag/get` endpoint filtering for `subKind: "component"`; tag `name` field has the human-readable label (e.g. "NFP")
 
 ## Condition ID Resolution (confirmed working)
 Conditions reference `checklistId`, `procedureId`, `responseId`. Resolution approach:
@@ -113,13 +115,13 @@ The `build_id_lookup()` function fetches every unique `procedureId` individually
 ## Column Layout (current)
 | # | Column | Source |
 |---|--------|--------|
-| A | Template Name | TEMPLATES config |
-| B | Note # | position counter |
-| C | Note Title | `title` field of nearest non-container titled ancestor |
-| D | Subnote # | section ID prefix |
-| E | Subnote Title | `title` field of section |
-| F | Section Content | `specification.content` stripped of HTML |
-| G | Visibility | "Hide when" / "Show when" / "Hide" / "Show" / "Use default settings" — shown only on the first condition row per section |
-| H | Condition Group | checklist name — shown only on the first row of each group |
-| I | Condition Name | procedure name from `summaryNames.en` or stripped `text` |
-| J | Expected Response | response label from `settings.responseSets[].responses[]` |
+| A | Note Group Title | title of top-level grouping ancestor |
+| B | Note Title | `title` field of nearest non-container titled ancestor |
+| C | Subnote Title | `title` field of section |
+| D | Content Title | leaf section title |
+| E | Section Content | `specification.content` stripped of HTML; placeholders in `(( ))`, dynamic text in `[[ ]]` |
+| F | Visibility | "Hide when" / "Show when" / "Hide" / "Show" / "Use default settings" — shown only on the first condition row per section |
+| G | Condition Group | checklist name — shown only on the first row of each group |
+| H | Condition Name | procedure name from `summaryNames.en` or stripped `text` |
+| I | Expected Response | response label from `settings.responseSets[].responses[]` |
+| J | Components | comma-separated component tag names from `tagging.component` |

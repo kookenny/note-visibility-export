@@ -95,10 +95,11 @@ class VisibilityRow:
     condition_group:      str   # e.g. "6-15 Financial statements optimiser (any)" (first row of group only)
     condition_name:       str   # e.g. "Statement of cash flows"
     expected_response:    str   # e.g. "Yes"
+    components:           str   # e.g. "NFP, Charities and foundation"
 
 
 COLUMN_HEADERS = [f.name.replace("_", " ").title() for f in fields(VisibilityRow)]
-COLUMN_WIDTHS   = [40, 40, 40, 40, 60, 28, 40, 45, 30]
+COLUMN_WIDTHS   = [40, 40, 40, 40, 60, 28, 40, 45, 30, 35]
 
 
 # ── HTML STRIPPING ────────────────────────────────────────────────────────────
@@ -244,6 +245,38 @@ def fetch_sections(session: requests.Session,
 
     log.warning("Unexpected response shape — returning empty list. Raw: %s", str(data)[:300])
     return []
+
+
+def fetch_component_lookup(session: requests.Session,
+                           engagement_id: str) -> dict[str, str]:
+    """Fetch all tags with subKind='component' and return {tag_id: name} map."""
+    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/tag/get"
+    log.info("Fetching component tags from %s", url)
+    resp = session.post(url, json={}, timeout=30)
+    if not resp.ok:
+        log.warning("tag/get returned %s — skipping components", resp.status_code)
+        return {}
+    tags = resp.json().get("objects", [])
+    return {t["id"]: t.get("name", "") for t in tags if t.get("subKind") == "component"}
+
+
+def build_section_components(sections: list[dict],
+                             component_lookup: dict[str, str]) -> dict[str, str]:
+    """Build {section_id: 'CompA, CompB'} from section.tagging.component."""
+    result = {}
+    for s in sections:
+        comp_map = (s.get("tagging") or {}).get("component")
+        if not comp_map:
+            continue
+        names = []
+        for tag_ids in comp_map.values():
+            for tid in tag_ids:
+                name = component_lookup.get(tid, "")
+                if name:
+                    names.append(name)
+        if names:
+            result[s["id"]] = ", ".join(sorted(set(names)))
+    return result
 
 
 def fetch_document_lookup(session: requests.Session, engagement_id: str) -> dict:
@@ -800,7 +833,8 @@ def section_rows(section: dict,
                  by_id: dict,
                  children_by_parent: dict,
                  lookup: dict,
-                 debug: bool) -> list[VisibilityRow]:
+                 debug: bool,
+                 section_components: dict[str, str] | None = None) -> list[VisibilityRow]:
     """
     Build VisibilityRow objects for a single titled section.
     Walks the full ancestor chain (including note types) to populate
@@ -829,6 +863,8 @@ def section_rows(section: dict,
     debug_label = section.get("title", section.get("id", ""))
     vis_rows = parse_visibility(vis, lookup=lookup, debug=debug, debug_label=debug_label)
 
+    comp_label = (section_components or {}).get(section["id"], "")
+
     # Show visibility only on first row; show condition_group only on first row of each group
     prev_group = None
     result     = []
@@ -846,6 +882,7 @@ def section_rows(section: dict,
             condition_group  = group_label,
             condition_name   = vr["condition_name"],
             expected_response = vr["expected_response"],
+            components       = comp_label       if first else "",
         ))
     return result
 
@@ -1147,12 +1184,16 @@ def main() -> None:
 
         # Build lookup: fetch each condition ID individually to resolve to names
         lookup: dict = {}
+        section_components: dict[str, str] = {}
         if not args.mock:
             lookup = build_id_lookup(session, engagement_id, sections)
             log.info("  %d names resolved", len(lookup))
+            component_lookup = fetch_component_lookup(session, engagement_id)
+            section_components = build_section_components(sections, component_lookup)
+            log.info("  %d sections have components", len(section_components))
 
         for sec in titled:
-            all_rows.extend(section_rows(sec, by_id, children_by_parent, lookup, args.debug))
+            all_rows.extend(section_rows(sec, by_id, children_by_parent, lookup, args.debug, section_components))
 
     if not all_rows:
         sys.exit("No data collected. Check your template configuration and cookies.")
