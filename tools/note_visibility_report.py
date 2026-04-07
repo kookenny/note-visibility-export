@@ -783,16 +783,17 @@ def section_rows(template_name: str,
     for i, vr in enumerate(vis_rows):
         group_label = vr["condition_group"] if vr["condition_group"] != prev_group else ""
         prev_group  = vr["condition_group"]
+        first = (i == 0)
         result.append(VisibilityRow(
-            template_name    = template_name,
-            note_group_title = group_title,
-            note_id          = note_id,
-            note_title       = note_title,
-            subnote_id       = subnote_id,
-            subnote_title    = subnote_title,
-            content_title    = content_title,
-            section_content  = content,
-            visibility       = vr["visibility"] if i == 0 else "",
+            template_name    = template_name    if first else "",
+            note_group_title = group_title      if first else "",
+            note_id          = note_id          if first else "",
+            note_title       = note_title       if first else "",
+            subnote_id       = subnote_id       if first else "",
+            subnote_title    = subnote_title    if first else "",
+            content_title    = content_title    if first else "",
+            section_content  = content          if first else "",
+            visibility       = vr["visibility"] if first else "",
             condition_group  = group_label,
             condition_name   = vr["condition_name"],
             expected_response = vr["expected_response"],
@@ -831,8 +832,9 @@ def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
     prev_key    = None
 
     for row in rows:
+        # Non-first condition rows have blank identifiers; only update key when populated
         key = (row.template_name, row.note_id, row.subnote_id)
-        if key != prev_key:
+        if key != ("", "", "") and key != prev_key:
             fill_toggle = not fill_toggle
             prev_key    = key
 
