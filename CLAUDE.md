@@ -80,16 +80,18 @@ The API returns sections with a `type` field. Types fall into two categories:
 | `analysis` | "Analysis" |
 | `grouping` | "Notice to Reader" |
 
-Key finding: `[note]` type sections all have `title = "Note"` in the API — the user-visible note name is NOT stored on these containers. The actual meaningful titles and visibility conditions are on the child `[content]` sections. Visibility on `[note]` and its `[content]` child is identical (duplicated), so processing only `[content]` is sufficient.
+Key finding: `[note]` type sections all have `title = "Note"` in the API — the user-visible note name is NOT stored on these containers. The actual meaningful titles are on the child `[content]` sections.
 
-Key finding: `[content]` sections that are children of `[note]` containers carry both the meaningful title AND the visibility conditions. `[note]` sections can be safely skipped.
+Key finding: Visibility conditions primarily live on `[note]` container sections (420 vs 30 on `[content]`). They are NOT reliably duplicated onto child `[content]` sections. The code uses `_effective_visibility()` to walk up the parent chain and inherit conditions from the nearest ancestor that carries them.
+
+Key finding: The Hide/Show direction is derived from `visibility.normallyVisible`, NOT from `visibility.override`. `normallyVisible=false` → "Hide when" (418/420 note sections); `normallyVisible=true` → "Show when". The `override` field is almost always `"default"` when conditions are present.
 
 ## Confirmed Working
 - Auth: full browser cookie string sent as `Cookie` request header via `CW_COOKIES` env var
 - Main endpoint: `POST /api/v1.12.0/section/get` with document filter returns `{"count": N, "objects": [...]}`
 - Section hierarchy: container types (`note`, `heading`, `settings`, `toc`) excluded from `ordered_titled_sections()`; `find_nearest_titled_ancestor()` also skips container types
 - Section content: extracted from `specification.content` HTML field, stripped to plain text; untitled child sections (text bodies) are merged into the parent section's content column
-- Visibility settings: `visibility.override` → "Use default settings" / "Show" / "Hide"; behavior derived as "Hide when" / "Show when"
+- Visibility settings: `_effective_visibility()` walks up parent chain to inherit conditions from `[note]` containers; Hide/Show direction derived from `normallyVisible` (false→"Hide when", true→"Show when"); `override` field rarely set to anything other than `"default"`
 - Condition structure confirmed: top-level `conditions` array contains flat `response` objects and `condition_group` objects (nested OR groups)
 
 ## Condition ID Resolution (confirmed working)
@@ -117,8 +119,7 @@ The `build_id_lookup()` function fetches every unique `procedureId` individually
 | D | Subnote # | section ID prefix |
 | E | Subnote Title | `title` field of section |
 | F | Section Content | `specification.content` stripped of HTML |
-| G | Visibility Setting | `visibility.override` |
-| H | Visibility Behavior | derived from override + normallyVisible |
-| I | Condition Group | checklist name resolved via `procedure/get` by checklist ID |
-| J | Condition Name | procedure name from `summaryNames.en` or stripped `text` |
-| K | Expected Response | response label from `settings.responseSets[].responses[]` |
+| G | Visibility | "Hide when" / "Show when" / "Hide" / "Show" / "Use default settings" — shown only on the first condition row per section |
+| H | Condition Group | checklist name — shown only on the first row of each group |
+| I | Condition Name | procedure name from `summaryNames.en` or stripped `text` |
+| J | Expected Response | response label from `settings.responseSets[].responses[]` |

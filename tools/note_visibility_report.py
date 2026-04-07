@@ -94,15 +94,14 @@ class VisibilityRow:
     subnote_title:        str   # e.g. "Basis of Accounting - no cash flow"
     content_title:        str   # e.g. "Cash - no cash flow" (leaf section title)
     section_content:      str   # plain-text body of the section
-    visibility_setting:   str   # Use default settings / Show / Hide
-    visibility_behavior:  str   # "Hide when" / "Show when" / ""
-    condition_group:      str   # e.g. "6-15 Financial statements optimiser"
+    visibility:           str   # "Hide when" / "Show when" / "Hide" / "Show" / "Use default settings"
+    condition_group:      str   # e.g. "6-15 Financial statements optimiser" (first row of group only)
     condition_name:       str   # e.g. "Statement of cash flows"
     expected_response:    str   # e.g. "Yes"
 
 
 COLUMN_HEADERS = [f.name.replace("_", " ").title() for f in fields(VisibilityRow)]
-COLUMN_WIDTHS   = [28, 40, 10, 40, 12, 40, 40, 60, 24, 20, 40, 45, 30]
+COLUMN_WIDTHS   = [28, 40, 10, 40, 12, 40, 40, 60, 28, 40, 45, 30]
 
 
 # ── HTML STRIPPING ────────────────────────────────────────────────────────────
@@ -612,6 +611,30 @@ def ordered_titled_sections(sections: list[dict]) -> list[dict]:
 
 # ── VISIBILITY PARSING ────────────────────────────────────────────────────────
 
+def _effective_visibility(section: dict, by_id: dict) -> dict:
+    """
+    Return the visibility dict to use for a section.
+    If the section has its own conditions, return its visibility.
+    Otherwise walk up the parent chain to find the nearest ancestor
+    (typically a [note] container) that carries conditions.
+    """
+    vis = section.get("visibility") or {}
+    if vis.get("conditions"):
+        return vis
+    parent_id = section.get("parent", "")
+    visited = {section.get("id", "")}
+    while parent_id and parent_id in by_id:
+        if parent_id in visited:
+            break
+        visited.add(parent_id)
+        parent = by_id[parent_id]
+        pvis = parent.get("visibility") or {}
+        if pvis.get("conditions"):
+            return pvis
+        parent_id = parent.get("parent", "")
+    return vis
+
+
 def _override_label(vis: dict) -> str:
     raw = vis.get("override", "default")
     return OVERRIDE_LABELS.get(raw, raw)
@@ -638,7 +661,6 @@ def _flatten_conditions(conditions: list, lookup: dict,
     Handles both plain response conditions and nested condition_group objects.
     """
     rows = []
-    group_counter = [0]   # mutable counter shared across recursion
 
     for cond in conditions:
         ctype = cond.get("type", "")
@@ -650,14 +672,12 @@ def _flatten_conditions(conditions: list, lookup: dict,
             rows.append((group_label or checklist, procedure, response))
 
         elif ctype == "condition_group":
-            group_counter[0] += 1
             nested = cond.get("conditions") or []
             # Derive a group label from the checklist of the first nested condition
             first_checklist = ""
             if nested:
                 first_checklist = _resolve_with_id(lookup, nested[0].get("checklistId"))
-            label = f"Condition Group {group_counter[0]}: {first_checklist}".strip(": ")
-            rows.extend(_flatten_conditions(nested, lookup, group_label=label))
+            rows.extend(_flatten_conditions(nested, lookup, group_label=first_checklist))
 
         else:
             # Unknown condition type — show raw type so nothing is silently dropped
@@ -666,50 +686,52 @@ def _flatten_conditions(conditions: list, lookup: dict,
     return rows
 
 
-def parse_visibility(section: dict,
+def parse_visibility(vis: dict,
                      lookup: dict,
-                     debug: bool = False) -> list[dict]:
+                     debug: bool = False,
+                     debug_label: str = "") -> list[dict]:
     """
-    Return a list of dicts representing condition rows for this section.
-    Each dict contains visibility_setting, visibility_behavior,
-    condition_group, condition_name, expected_response.
+    Return a list of dicts representing condition rows for a visibility dict.
+    Each dict contains visibility, condition_group, condition_name, expected_response.
     One row per condition; one empty row if there are no conditions.
-    """
-    vis = section.get("visibility") or {}
 
+    The visibility dict may come from the section itself or from an ancestor
+    (via _effective_visibility).
+    """
     if debug and vis:
         log.debug("RAW visibility for '%s':\n%s",
-                  section.get("title", section.get("id")),
-                  json.dumps(vis, indent=2))
+                  debug_label, json.dumps(vis, indent=2))
 
-    override   = _override_label(vis)
-    conditions = vis.get("conditions") or []
+    raw_override     = vis.get("override", "default")
+    conditions       = vis.get("conditions") or []
+    normally_visible = vis.get("normallyVisible", True)
 
-    # Determine hide/show behavior label
-    if override == "default" or not conditions:
-        behavior = ""
-    elif override in ("hide", "always_hide"):
-        behavior = "Hide when"
+    # Derive the single merged visibility label.
+    # "show"/"hide" overrides force visibility regardless of conditions.
+    # "default" + conditions: direction comes from normallyVisible:
+    #   normallyVisible=false → "Hide when" (normally hidden; hide when conditions met)
+    #   normallyVisible=true  → "Show when" (normally visible; show when conditions met)
+    if raw_override == "show" and not conditions:
+        visibility = "Show"
+    elif raw_override == "hide" and not conditions:
+        visibility = "Hide"
+    elif raw_override in ("show", "hide") and conditions:
+        visibility = "Hide when" if raw_override == "hide" else "Show when"
+    elif conditions:
+        visibility = "Hide when" if not normally_visible else "Show when"
     else:
-        behavior = "Show when"
-
-    base = dict(
-        visibility_setting = override,
-        visibility_behavior = behavior,
-    )
+        visibility = "Use default settings"
 
     if not conditions:
-        return [{**base, "condition_group": "", "condition_name": "", "expected_response": ""}]
+        return [{"visibility": visibility, "condition_group": "", "condition_name": "", "expected_response": ""}]
 
     rows = []
     for group, name, resp in _flatten_conditions(conditions, lookup):
-        rows.append({**base,
-                     "condition_group":   group,
-                     "condition_name":    name,
+        rows.append({"visibility":       visibility,
+                     "condition_group":  group,
+                     "condition_name":   name,
                      "expected_response": resp})
-    return rows if rows else [{**base,
-                                "condition_group": "", "condition_name": "",
-                                "expected_response": ""}]
+    return rows if rows else [{"visibility": visibility, "condition_group": "", "condition_name": "", "expected_response": ""}]
 
 
 def section_rows(template_name: str,
@@ -751,23 +773,29 @@ def section_rows(template_name: str,
         if child_text:
             content = f"{content}\n{child_text}".strip() if content else child_text
 
-    vis_rows = parse_visibility(section, lookup=lookup, debug=debug)
-    result   = []
-    for vr in vis_rows:
+    vis = _effective_visibility(section, by_id)
+    debug_label = section.get("title", section.get("id", ""))
+    vis_rows = parse_visibility(vis, lookup=lookup, debug=debug, debug_label=debug_label)
+
+    # Show visibility only on first row; show condition_group only on first row of each group
+    prev_group = None
+    result     = []
+    for i, vr in enumerate(vis_rows):
+        group_label = vr["condition_group"] if vr["condition_group"] != prev_group else ""
+        prev_group  = vr["condition_group"]
         result.append(VisibilityRow(
-            template_name       = template_name,
-            note_group_title    = group_title,
-            note_id             = note_id,
-            note_title          = note_title,
-            subnote_id          = subnote_id,
-            subnote_title       = subnote_title,
-            content_title       = content_title,
-            section_content     = content,
-            visibility_setting  = vr["visibility_setting"],
-            visibility_behavior = vr["visibility_behavior"],
-            condition_group     = vr["condition_group"],
-            condition_name      = vr["condition_name"],
-            expected_response   = vr["expected_response"],
+            template_name    = template_name,
+            note_group_title = group_title,
+            note_id          = note_id,
+            note_title       = note_title,
+            subnote_id       = subnote_id,
+            subnote_title    = subnote_title,
+            content_title    = content_title,
+            section_content  = content,
+            visibility       = vr["visibility"] if i == 0 else "",
+            condition_group  = group_label,
+            condition_name   = vr["condition_name"],
+            expected_response = vr["expected_response"],
         ))
     return result
 
