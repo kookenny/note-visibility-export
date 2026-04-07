@@ -84,7 +84,7 @@ Key finding: `[note]` type sections all have `title = "Note"` in the API — the
 
 Key finding: Visibility conditions primarily live on `[note]` container sections (420 vs 30 on `[content]`). They are NOT reliably duplicated onto child `[content]` sections. The code uses `_effective_visibility()` to walk up the parent chain and inherit conditions from the nearest ancestor that carries them.
 
-Key finding: The Hide/Show direction is derived from `visibility.normallyVisible`, NOT from `visibility.override`. `normallyVisible=false` → "Hide when" (418/420 note sections); `normallyVisible=true` → "Show when". The `override` field is almost always `"default"` when conditions are present.
+Key finding: The Hide/Show direction is derived from `visibility.normallyVisible`, NOT from `visibility.override`. `normallyVisible=false` → "Show when" (normally hidden, shows when conditions met; 418/420 note sections); `normallyVisible=true` → "Hide when" (normally visible, hides when conditions met). The `override` field is almost always `"default"` when conditions are present.
 
 ## Confirmed Working
 - Auth: full browser cookie string sent as `Cookie` request header via `CW_COOKIES` env var

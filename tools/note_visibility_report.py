@@ -709,8 +709,8 @@ def parse_visibility(vis: dict,
     # Derive the single merged visibility label.
     # "show"/"hide" overrides force visibility regardless of conditions.
     # "default" + conditions: direction comes from normallyVisible:
-    #   normallyVisible=false → "Hide when" (normally hidden; hide when conditions met)
-    #   normallyVisible=true  → "Show when" (normally visible; show when conditions met)
+    #   normallyVisible=false → "Show when" (normally hidden; show when conditions met)
+    #   normallyVisible=true  → "Hide when" (normally visible; hide when conditions met)
     if raw_override == "show" and not conditions:
         visibility = "Show"
     elif raw_override == "hide" and not conditions:
@@ -718,7 +718,7 @@ def parse_visibility(vis: dict,
     elif raw_override in ("show", "hide") and conditions:
         visibility = "Hide when" if raw_override == "hide" else "Show when"
     elif conditions:
-        visibility = "Hide when" if not normally_visible else "Show when"
+        visibility = "Show when" if not normally_visible else "Hide when"
     else:
         visibility = "Use default settings"
 
