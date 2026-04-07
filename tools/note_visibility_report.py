@@ -86,22 +86,19 @@ OVERRIDE_LABELS = {
 
 @dataclass
 class VisibilityRow:
-    template_name:        str
     note_group_title:     str   # e.g. "Summary of accounting policies"
-    note_id:              str   # numeric position label
     note_title:           str   # e.g. "Basis of Accounting"
-    subnote_id:           str   # blank if no subnote level
     subnote_title:        str   # e.g. "Basis of Accounting - no cash flow"
     content_title:        str   # e.g. "Cash - no cash flow" (leaf section title)
     section_content:      str   # plain-text body of the section
-    visibility:           str   # "Hide when" / "Show when" / "Hide" / "Show" / "Use default settings"
-    condition_group:      str   # e.g. "6-15 Financial statements optimiser" (first row of group only)
+    visibility:           str   # "Hide when all" / "Show when any" / "Hide" / "Show" / "Use default settings"
+    condition_group:      str   # e.g. "6-15 Financial statements optimiser (any)" (first row of group only)
     condition_name:       str   # e.g. "Statement of cash flows"
     expected_response:    str   # e.g. "Yes"
 
 
 COLUMN_HEADERS = [f.name.replace("_", " ").title() for f in fields(VisibilityRow)]
-COLUMN_WIDTHS   = [28, 40, 10, 40, 12, 40, 40, 60, 28, 40, 45, 30]
+COLUMN_WIDTHS   = [40, 40, 40, 40, 60, 28, 40, 45, 30]
 
 
 # ── HTML STRIPPING ────────────────────────────────────────────────────────────
@@ -742,11 +739,9 @@ def parse_visibility(vis: dict,
     return rows if rows else [{"visibility": visibility, "condition_group": "", "condition_name": "", "expected_response": ""}]
 
 
-def section_rows(template_name: str,
-                 section: dict,
+def section_rows(section: dict,
                  by_id: dict,
                  children_by_parent: dict,
-                 note_counter: dict,
                  lookup: dict,
                  debug: bool) -> list[VisibilityRow]:
     """
@@ -757,16 +752,6 @@ def section_rows(template_name: str,
     """
     group_title, note_title, subnote_title = get_note_hierarchy(section, by_id)
     content_title = get_title(section)
-
-    # Colour-grouping key: the immediate note parent (or the section itself if top-level)
-    note_key  = section.get("parent", section.get("id", ""))
-    sub_key   = section.get("id", "")
-
-    # Assign stable numeric IDs for alternating row colours
-    if note_key not in note_counter:
-        note_counter[note_key] = str(len(note_counter) + 1)
-    note_id    = note_counter[note_key]
-    subnote_id = sub_key[:8] if sub_key else ""
 
     raw_html = (section.get("specification") or {}).get("content", "")
     content  = strip_html(raw_html)
@@ -793,11 +778,8 @@ def section_rows(template_name: str,
         prev_group  = vr["condition_group"]
         first = (i == 0)
         result.append(VisibilityRow(
-            template_name    = template_name    if first else "",
             note_group_title = group_title      if first else "",
-            note_id          = note_id          if first else "",
             note_title       = note_title       if first else "",
-            subnote_id       = subnote_id       if first else "",
             subnote_title    = subnote_title    if first else "",
             content_title    = content_title    if first else "",
             section_content  = content          if first else "",
@@ -841,7 +823,7 @@ def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
 
     for row in rows:
         # Non-first condition rows have blank identifiers; only update key when populated
-        key = (row.template_name, row.note_id, row.subnote_id)
+        key = (row.note_group_title, row.note_title, row.subnote_title)
         if key != ("", "", "") and key != prev_key:
             fill_toggle = not fill_toggle
             prev_key    = key
@@ -850,8 +832,7 @@ def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
         fill = FILL_B if fill_toggle else FILL_A
         for col_idx, cell in enumerate(ws[ws.max_row], start=1):
             cell.fill      = fill
-            # Wrap text in the Section Content column (column 6) only
-            cell.alignment = Alignment(vertical="top", wrap_text=(col_idx == 6))
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
 
     try:
         wb.save(output_path)
@@ -1095,7 +1076,7 @@ def main() -> None:
         log.info("  %d sections fetched", len(sections))
         by_id        = {s["id"]: s for s in sections}
         titled       = ordered_titled_sections(sections)
-        note_counter: dict = {}
+
         log.info("  %d titled sections found", len(titled))
 
         # Map parent id → all child sections (including untitled Text/body sections)
@@ -1112,7 +1093,7 @@ def main() -> None:
             log.info("  %d names resolved", len(lookup))
 
         for sec in titled:
-            all_rows.extend(section_rows(template_name, sec, by_id, children_by_parent, note_counter, lookup, args.debug))
+            all_rows.extend(section_rows(sec, by_id, children_by_parent, lookup, args.debug))
 
     if not all_rows:
         sys.exit("No data collected. Check your template configuration and cookies.")
