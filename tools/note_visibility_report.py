@@ -103,9 +103,10 @@ COLUMN_WIDTHS   = [40, 40, 40, 40, 60, 28, 40, 45, 30]
 
 # ── HTML STRIPPING ────────────────────────────────────────────────────────────
 
-def strip_html(html: str) -> str:
+def strip_html(html: str, formula_map: dict[str, str] | None = None) -> str:
     """Convert an HTML string to plain text by removing tags and unescaping entities.
-    Placeholder spans are wrapped in (( )) to distinguish default/editable text."""
+    Placeholder spans are wrapped in (( )).
+    Formula/dynamic-text spans are resolved via *formula_map* and wrapped in [[ ]]."""
     if not html:
         return ""
     # Wrap placeholder span contents in (( )) before stripping tags
@@ -114,10 +115,32 @@ def strip_html(html: str) -> str:
         r"((\1))",
         html,
     )
+    # Resolve dynamic-text formula spans → [[calculated value]]
+    if formula_map:
+        def _resolve_formula(m: re.Match) -> str:
+            fid = m.group(1)
+            val = formula_map.get(fid, "")
+            return f"[[{val}]]" if val else ""
+        text = re.sub(
+            r'<span[^>]*\bformula="([^"]*)"[^>]*>.*?</span>',
+            _resolve_formula,
+            text,
+        )
     text = re.sub(r"<[^>]+>", " ", text)   # replace tags with a space
     text = unescape(text)                   # &amp; → &, &#160; → space, etc.
     text = re.sub(r"\s+", " ", text)        # collapse whitespace
     return text.strip()
+
+
+def build_formula_map(section: dict) -> dict[str, str]:
+    """Build a {referenceId: calculated_value} map from a section's attachables."""
+    result = {}
+    for a in (section.get("attachables") or {}).values():
+        ref_id = a.get("referenceId")
+        calc = (a.get("calculated") or "").strip()
+        if ref_id and calc:
+            result[ref_id] = calc
+    return result
 
 
 # ── SESSION ───────────────────────────────────────────────────────────────────
@@ -788,7 +811,8 @@ def section_rows(section: dict,
     content_title = get_title(section)
 
     raw_html = (section.get("specification") or {}).get("content", "")
-    content  = strip_html(raw_html)
+    fmap     = build_formula_map(section)
+    content  = strip_html(raw_html, fmap)
 
     # Merge content from untitled child sections (Heading → Text pattern)
     untitled_children = sorted(
@@ -796,7 +820,8 @@ def section_rows(section: dict,
         key=lambda s: s.get("order", ""),
     )
     for child in untitled_children:
-        child_text = strip_html((child.get("specification") or {}).get("content", ""))
+        child_fmap = build_formula_map(child)
+        child_text = strip_html((child.get("specification") or {}).get("content", ""), child_fmap)
         if child_text:
             content = f"{content}\n{child_text}".strip() if content else child_text
 
