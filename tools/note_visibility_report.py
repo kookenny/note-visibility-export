@@ -104,10 +104,17 @@ COLUMN_WIDTHS   = [40, 40, 40, 40, 60, 28, 40, 45, 30]
 # ── HTML STRIPPING ────────────────────────────────────────────────────────────
 
 def strip_html(html: str) -> str:
-    """Convert an HTML string to plain text by removing tags and unescaping entities."""
+    """Convert an HTML string to plain text by removing tags and unescaping entities.
+    Placeholder spans are wrapped in (( )) to distinguish default/editable text."""
     if not html:
         return ""
-    text = re.sub(r"<[^>]+>", " ", html)   # replace tags with a space
+    # Wrap placeholder span contents in (( )) before stripping tags
+    text = re.sub(
+        r'<span[^>]*\bplaceholder="[^"]*"[^>]*>(.*?)</span>',
+        r"((\1))",
+        html,
+    )
+    text = re.sub(r"<[^>]+>", " ", text)   # replace tags with a space
     text = unescape(text)                   # &amp; → &, &#160; → space, etc.
     text = re.sub(r"\s+", " ", text)        # collapse whitespace
     return text.strip()
@@ -115,21 +122,48 @@ def strip_html(html: str) -> str:
 
 # ── SESSION ───────────────────────────────────────────────────────────────────
 
-def make_session() -> requests.Session:
-    """Build a requests.Session pre-loaded with the browser cookie string."""
-    cookies = os.environ.get("CW_COOKIES", "").strip()
-    if not cookies:
-        sys.exit(
-            "ERROR: Missing environment variable CW_COOKIES.\n"
-            "See the SETUP section at the top of this file."
-        )
+def _obtain_bearer_token() -> str | None:
+    """Exchange CW_CLIENT_ID + CW_CLIENT_SECRET for a Bearer token via OAuth."""
+    client_id     = os.environ.get("CW_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("CW_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        return None
+    url = f"{HOST}/{TENANT}/ms/caseware-cloud/api/v1/auth/token"
+    resp = requests.post(url, json={
+        "ClientId": client_id, "ClientSecret": client_secret, "Language": "en",
+    }, headers={"Accept": "application/json", "Content-Type": "application/json"},
+       timeout=15)
+    resp.raise_for_status()
+    token = resp.json().get("Token")
+    if token:
+        log.info("Authenticated via OAuth (Bearer token)")
+    return token
 
+
+def make_session() -> requests.Session:
+    """Build a requests.Session using OAuth (preferred) or browser cookies."""
     session = requests.Session()
     session.headers.update({
         "Accept":       "application/json",
         "Content-Type": "application/json",
-        "Cookie":       cookies,
     })
+
+    # Try OAuth first
+    token = _obtain_bearer_token()
+    if token:
+        session.headers["Authorization"] = f"Bearer {token}"
+        return session
+
+    # Fall back to cookie auth
+    cookies = os.environ.get("CW_COOKIES", "").strip()
+    if not cookies:
+        sys.exit(
+            "ERROR: No auth credentials found.\n"
+            "Set CW_CLIENT_ID + CW_CLIENT_SECRET for OAuth, "
+            "or CW_COOKIES for cookie auth."
+        )
+    session.headers["Cookie"] = cookies
+    log.info("Authenticated via browser cookies")
     return session
 
 
