@@ -673,11 +673,14 @@ def _flatten_conditions(conditions: list, lookup: dict,
 
         elif ctype == "condition_group":
             nested = cond.get("conditions") or []
+            group_all = cond.get("allConditionsNeeded", False)
+            qualifier = "all" if group_all else "any"
             # Derive a group label from the checklist of the first nested condition
             first_checklist = ""
             if nested:
                 first_checklist = _resolve_with_id(lookup, nested[0].get("checklistId"))
-            rows.extend(_flatten_conditions(nested, lookup, group_label=first_checklist))
+            label = f"{first_checklist} ({qualifier})" if first_checklist else f"({qualifier})"
+            rows.extend(_flatten_conditions(nested, lookup, group_label=label))
 
         else:
             # Unknown condition type — show raw type so nothing is silently dropped
@@ -705,20 +708,25 @@ def parse_visibility(vis: dict,
     raw_override     = vis.get("override", "default")
     conditions       = vis.get("conditions") or []
     normally_visible = vis.get("normallyVisible", True)
+    all_needed       = vis.get("allConditionsNeeded", False)
+    quantifier       = "all" if all_needed else "any"
 
     # Derive the single merged visibility label.
     # "show"/"hide" overrides force visibility regardless of conditions.
     # "default" + conditions: direction comes from normallyVisible:
     #   normallyVisible=false → "Show when" (normally hidden; show when conditions met)
     #   normallyVisible=true  → "Hide when" (normally visible; hide when conditions met)
+    # quantifier from allConditionsNeeded: "any" or "all"
     if raw_override == "show" and not conditions:
         visibility = "Show"
     elif raw_override == "hide" and not conditions:
         visibility = "Hide"
     elif raw_override in ("show", "hide") and conditions:
-        visibility = "Hide when" if raw_override == "hide" else "Show when"
+        direction = "Hide" if raw_override == "hide" else "Show"
+        visibility = f"{direction} when {quantifier}"
     elif conditions:
-        visibility = "Show when" if not normally_visible else "Hide when"
+        direction = "Show" if not normally_visible else "Hide"
+        visibility = f"{direction} when {quantifier}"
     else:
         visibility = "Use default settings"
 
