@@ -3,8 +3,17 @@
 ## Project Purpose
 One-time snapshot tool that extracts note/subnote visibility settings from CaseWare Cloud Smart Engagements (SE) author templates and writes them to an Excel spreadsheet.
 
-## Key File
-- `note_visibility_report.py` — the single script; run with `--mock` to test without API access
+## Project Structure
+```
+tools/              # Python scripts
+  note_visibility_report.py
+workflows/          # SOPs
+  export_note_visibility.md
+.tmp/               # Output files (gitignored, regenerated as needed)
+.env                # CW_COOKIES (gitignored — expires each session)
+```
+
+See [workflows/export_note_visibility.md](workflows/export_note_visibility.md) for step-by-step run instructions.
 
 ## API Details
 - **Platform:** CaseWare Cloud (internal), hosted at `https://ca.cwcloudpartner.com`
@@ -26,33 +35,27 @@ Each section object returned by the API has:
 - `visibility.conditions` — array of condition objects; contains flat `response` objects and `condition_group` objects (nested OR groups)
 
 ## Python Installation
-The Python executable is at:
+The Python executable location depends on the machine. Known locations:
+- **Work laptop (kenny.koo):** `C:\Users\kenny.koo\AppData\Local\Programs\Python\Python314\python.exe`
+- **Original machine (Kenny):** `C:\Users\Kenny\AppData\Local\Programs\Python\Python314\python.exe`
+
+Use the full path when running from bash (e.g. in Claude Code terminal), as `python` / `python3` / `py` are not on the bash PATH. PowerShell can use `python` directly.
+
+If unsure which machine you're on, run:
+```bash
+find "/c/Users/$USER/AppData/Local" -name "python.exe" 2>/dev/null
 ```
-C:\Users\Kenny\AppData\Local\Programs\Python\Python314\python.exe
-```
-Use this full path when running from bash (e.g. in Claude Code terminal), as `python` / `python3` / `py` are not on the bash PATH. PowerShell can use `python` directly.
 
 ## Running the Script
-```powershell
-# Test with sample data (no cookies needed)
-python note_visibility_report.py --mock
+See [workflows/export_note_visibility.md](workflows/export_note_visibility.md) for full instructions.
 
-# Live run (PowerShell)
-$env:CW_COOKIES="<full cookie string>"
-python note_visibility_report.py
+```bash
+# Test with sample data (no cookies needed)
+python tools/note_visibility_report.py --mock
 
 # See raw visibility JSON per section
-python note_visibility_report.py --debug
+python tools/note_visibility_report.py --debug
 ```
-
-## How to Get Your Cookie String
-1. Open the template in the browser with DevTools open (F12)
-2. Network tab → filter by "section" → click any `section/get` POST request
-3. Headers tab → scroll to **Request Headers** → find the `cookie:` line
-4. Copy the entire value (semicolon-separated, includes `secid`, `JSESSIONID`, `__username__`, etc.)
-5. Paste as `$env:CW_COOKIES="..."` in PowerShell before running
-
-Cookies expire when the browser session ends — re-copy if you get auth errors.
 
 ## How to Get engagementId and documentId
 - **engagementId:** visible in the browser URL when viewing a template: `.../e/eng/{engagementId}/...`

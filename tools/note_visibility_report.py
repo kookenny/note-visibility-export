@@ -66,7 +66,7 @@ TEMPLATES = [
     # ("Template B", "<engagementId>", "<documentId>"),
 ]
 
-OUTPUT_FILE = "note_visibility_report.xlsx"
+OUTPUT_FILE = ".tmp/note_visibility_report.xlsx"
 
 # ── END CONFIGURATION ─────────────────────────────────────────────────────────
 
