@@ -742,9 +742,10 @@ def _resolve_with_id(lookup: dict, id_obj) -> str:
 
 
 def _flatten_conditions(conditions: list, lookup: dict,
-                        group_label: str = "") -> list[tuple]:
+                        group_label: str = "",
+                        is_group: bool = False) -> list[tuple]:
     """
-    Recursively flatten a conditions list into (group, condition, response) tuples.
+    Recursively flatten a conditions list into (group, condition, response, is_group) tuples.
     Handles both plain response conditions and nested condition_group objects.
     """
     rows = []
@@ -756,7 +757,7 @@ def _flatten_conditions(conditions: list, lookup: dict,
             checklist = _resolve_with_id(lookup, cond.get("checklistId"))
             procedure = _resolve(lookup, cond.get("procedureId"))
             response  = _resolve(lookup, cond.get("responseId"))
-            rows.append((group_label or checklist, procedure, response))
+            rows.append((group_label or checklist, procedure, response, is_group))
 
         elif ctype == "condition_group":
             nested = cond.get("conditions") or []
@@ -767,11 +768,11 @@ def _flatten_conditions(conditions: list, lookup: dict,
             if nested:
                 first_checklist = _resolve_with_id(lookup, nested[0].get("checklistId"))
             label = f"{first_checklist} ({qualifier})" if first_checklist else f"({qualifier})"
-            rows.extend(_flatten_conditions(nested, lookup, group_label=label))
+            rows.extend(_flatten_conditions(nested, lookup, group_label=label, is_group=True))
 
         else:
             # Unknown condition type — show raw type so nothing is silently dropped
-            rows.append((group_label, ctype, json.dumps(cond)[:80]))
+            rows.append((group_label, ctype, json.dumps(cond)[:80], is_group))
 
     return rows
 
@@ -821,11 +822,12 @@ def parse_visibility(vis: dict,
         return [{"visibility": visibility, "condition_group": "", "condition_name": "", "expected_response": ""}]
 
     rows = []
-    for group, name, resp in _flatten_conditions(conditions, lookup):
+    for group, name, resp, is_group in _flatten_conditions(conditions, lookup):
         rows.append({"visibility":       visibility,
                      "condition_group":  group,
                      "condition_name":   name,
-                     "expected_response": resp})
+                     "expected_response": resp,
+                     "is_group":         is_group})
     return rows if rows else [{"visibility": visibility, "condition_group": "", "condition_name": "", "expected_response": ""}]
 
 
@@ -869,7 +871,10 @@ def section_rows(section: dict,
     prev_group = None
     result     = []
     for i, vr in enumerate(vis_rows):
-        group_label = vr["condition_group"] if vr["condition_group"] != prev_group else ""
+        raw_group   = vr["condition_group"]
+        is_group    = vr.get("is_group", False)
+        prefix      = "[Group] " if is_group else ""
+        group_label = (f"{prefix}{raw_group}" if raw_group else "") if raw_group != prev_group else ""
         prev_group  = vr["condition_group"]
         first = (i == 0)
         result.append(VisibilityRow(
@@ -877,7 +882,7 @@ def section_rows(section: dict,
             note_title       = note_title       if first else "",
             subnote_title    = subnote_title    if first else "",
             content_title    = content_title    if first else "",
-            section_content  = content          if first else "",
+            section_content  = (content or "{Review dynamic table/analysis graph in product}") if first else "",
             visibility       = vr["visibility"] if first else "",
             condition_group  = group_label,
             condition_name   = vr["condition_name"],
@@ -913,14 +918,14 @@ def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
     ws.freeze_panes           = "A2"
     ws.auto_filter.ref        = f"A1:{get_column_letter(len(COLUMN_HEADERS))}1"
 
-    # Data rows with alternating fill per (template, note_id, subnote_id)
+    # Data rows with alternating fill per content title (column D)
     fill_toggle = False
     prev_key    = None
 
     for row in rows:
         # Non-first condition rows have blank identifiers; only update key when populated
-        key = (row.note_group_title, row.note_title, row.subnote_title)
-        if key != ("", "", "") and key != prev_key:
+        key = (row.note_group_title, row.note_title, row.subnote_title, row.content_title)
+        if key != ("", "", "", "") and key != prev_key:
             fill_toggle = not fill_toggle
             prev_key    = key
 
