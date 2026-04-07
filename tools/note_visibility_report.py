@@ -87,10 +87,12 @@ OVERRIDE_LABELS = {
 @dataclass
 class VisibilityRow:
     template_name:        str
+    note_group_title:     str   # e.g. "Summary of accounting policies"
     note_id:              str   # numeric position label
     note_title:           str   # e.g. "Basis of Accounting"
-    subnote_id:           str   # blank if this IS the top-level note
-    subnote_title:        str
+    subnote_id:           str   # blank if no subnote level
+    subnote_title:        str   # e.g. "Basis of Accounting - no cash flow"
+    content_title:        str   # e.g. "Cash - no cash flow" (leaf section title)
     section_content:      str   # plain-text body of the section
     visibility_setting:   str   # Use default settings / Show / Hide
     visibility_behavior:  str   # "Hide when" / "Show when" / ""
@@ -100,7 +102,7 @@ class VisibilityRow:
 
 
 COLUMN_HEADERS = [f.name.replace("_", " ").title() for f in fields(VisibilityRow)]
-COLUMN_WIDTHS   = [28, 10, 40, 12, 40, 60, 24, 20, 40, 45, 30]
+COLUMN_WIDTHS   = [28, 40, 10, 40, 12, 40, 40, 60, 24, 20, 40, 45, 30]
 
 
 # ── HTML STRIPPING ────────────────────────────────────────────────────────────
@@ -505,10 +507,51 @@ def get_ancestor_chain(section: dict, by_id: dict) -> list:
 
 
 def get_title(section: dict) -> str:
-    """Return the display title of a section, trying multiple field names."""
-    return (section.get("title")
-            or section.get("titles", {}).get("en", "")
-            or "").strip()
+    """
+    Return the display title of a section, stripped of HTML tags.
+    note-type sections store their real title in specification.title;
+    the top-level title field is always the generic string "Note".
+    """
+    raw = (section.get("title")
+           or section.get("titles", {}).get("en", "")
+           or "").strip()
+    title = strip_html(raw) if raw else ""
+    # For note sections the meaningful title is in specification.title
+    if not title or title == "Note":
+        spec = section.get("specification") or {}
+        spec_title = (spec.get("title")
+                      or (spec.get("titles") or {}).get("en", "")
+                      or "")
+        if spec_title:
+            title = strip_html(spec_title)
+    return title
+
+
+def get_note_hierarchy(section: dict, by_id: dict) -> tuple[str, str, str]:
+    """
+    Walk up the parent chain (including note types) and return
+    (note_group, note, subnote) — the 3 nearest titled non-structural ancestors.
+    Structural types (heading, settings, toc) are skipped; note types are included.
+    Returns empty strings for levels that don't exist.
+    """
+    _STRUCTURAL = {"heading", "settings", "toc"}
+    ancestors: list[str] = []
+    parent_id = section.get("parent", "")
+    visited = {section.get("id", "")}
+    while parent_id and parent_id in by_id:
+        if parent_id in visited:
+            break
+        visited.add(parent_id)
+        parent = by_id[parent_id]
+        title = get_title(parent)
+        if title and parent.get("type", "") not in _STRUCTURAL:
+            ancestors.append(title)
+        parent_id = parent.get("parent", "")
+    # ancestors[0] = immediate titled parent, [1] = grandparent, [2] = great-grandparent
+    subnote = ancestors[0] if len(ancestors) >= 1 else ""
+    note    = ancestors[1] if len(ancestors) >= 2 else ""
+    group   = ancestors[2] if len(ancestors) >= 3 else ""
+    return group, note, subnote
 
 
 def find_nearest_titled_ancestor(section: dict, by_id: dict) -> Optional[dict]:
@@ -678,24 +721,16 @@ def section_rows(template_name: str,
                  debug: bool) -> list[VisibilityRow]:
     """
     Build VisibilityRow objects for a single titled section.
-    Finds the nearest non-container titled ancestor to use as Note Title;
-    the section itself becomes Subnote Title.
-    If no such ancestor exists, the section is the note (Subnote Title blank).
-    Content from untitled child sections (Text/body) is merged into Column F.
+    Walks the full ancestor chain (including note types) to populate
+    Note Group, Note, and Subnote hierarchy columns.
+    Content from untitled child sections (Text/body) is merged into Section Content.
     """
-    ancestor  = find_nearest_titled_ancestor(section, by_id)
-    sec_title = get_title(section)
+    group_title, note_title, subnote_title = get_note_hierarchy(section, by_id)
+    content_title = get_title(section)
 
-    if ancestor:
-        note_title    = get_title(ancestor)
-        subnote_title = sec_title
-        note_key      = ancestor["id"]
-        sub_key       = section["id"]
-    else:
-        note_title    = sec_title
-        subnote_title = ""
-        note_key      = section["id"]
-        sub_key       = ""
+    # Colour-grouping key: the immediate note parent (or the section itself if top-level)
+    note_key  = section.get("parent", section.get("id", ""))
+    sub_key   = section.get("id", "")
 
     # Assign stable numeric IDs for alternating row colours
     if note_key not in note_counter:
@@ -721,10 +756,12 @@ def section_rows(template_name: str,
     for vr in vis_rows:
         result.append(VisibilityRow(
             template_name       = template_name,
+            note_group_title    = group_title,
             note_id             = note_id,
             note_title          = note_title,
             subnote_id          = subnote_id,
             subnote_title       = subnote_title,
+            content_title       = content_title,
             section_content     = content,
             visibility_setting  = vr["visibility_setting"],
             visibility_behavior = vr["visibility_behavior"],
@@ -976,6 +1013,8 @@ def main() -> None:
                         help="Test candidate endpoints to find procedure/response names")
     parser.add_argument("--output", default=OUTPUT_FILE,
                         help=f"Output file path (default: {OUTPUT_FILE})")
+    parser.add_argument("--dump-sections", action="store_true",
+                        help="Save raw sections JSON to .tmp/sections_dump.json and exit")
     args = parser.parse_args()
 
     if args.debug:
@@ -990,6 +1029,15 @@ def main() -> None:
         _, engagement_id, _ = TEMPLATES[0]
         print(f"\nProbing endpoints for engagement: {engagement_id}\n")
         probe_endpoints(session, engagement_id)
+
+    if args.dump_sections:
+        _, engagement_id, document_id = TEMPLATES[0]
+        sections = fetch_sections(session, engagement_id, document_id)
+        dump_path = ".tmp/sections_dump.json"
+        with open(dump_path, "w", encoding="utf-8") as f:
+            json.dump(sections, f, indent=2)
+        print(f"Dumped {len(sections)} sections to {dump_path}")
+        sys.exit(0)
 
     all_rows: list[VisibilityRow] = []
 
