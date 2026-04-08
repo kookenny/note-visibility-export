@@ -86,6 +86,9 @@ OVERRIDE_LABELS = {
 
 @dataclass
 class VisibilityRow:
+    note_number:          str   # e.g. "1", "2" — top-level note number
+    subnote_letter:       str   # e.g. "a", "b" — subnote position letter
+    item_numeral:         str   # e.g. "i", "ii" — third-level roman numeral
     note_group_title:     str   # e.g. "Summary of accounting policies"
     note_title:           str   # e.g. "Basis of Accounting"
     subnote_title:        str   # e.g. "Basis of Accounting - no cash flow"
@@ -99,7 +102,7 @@ class VisibilityRow:
 
 
 COLUMN_HEADERS = [f.name.replace("_", " ").title() for f in fields(VisibilityRow)]
-COLUMN_WIDTHS   = [40, 40, 40, 40, 60, 28, 40, 45, 30, 35]
+COLUMN_WIDTHS   = [10, 10, 10, 40, 40, 40, 40, 60, 28, 40, 45, 30, 35]
 
 
 # ── HTML STRIPPING ────────────────────────────────────────────────────────────
@@ -696,6 +699,97 @@ def ordered_titled_sections(sections: list[dict]) -> list[dict]:
     return result
 
 
+def _to_roman(n: int) -> str:
+    """Convert a positive integer to a lowercase roman numeral string."""
+    vals = [(1000,'m'),(900,'cm'),(500,'d'),(400,'cd'),(100,'c'),(90,'xc'),
+            (50,'l'),(40,'xl'),(10,'x'),(9,'ix'),(5,'v'),(4,'iv'),(1,'i')]
+    result = []
+    for val, numeral in vals:
+        while n >= val:
+            result.append(numeral)
+            n -= val
+    return "".join(result)
+
+
+def compute_note_numbers(sections: list[dict]) -> dict[str, tuple[str, str, str]]:
+    """
+    Compute note numbers (1, 2, 3...), subnote letters (a, b, c...),
+    and item numerals (i, ii, iii...) based on position among siblings,
+    matching the CaseWare UI numbering.
+
+    Structure: heading → note (top-level, numbered) → note (subnote, lettered)
+               → note (item, roman numeral) → content (leaf).
+
+    Returns {section_id: (note_number, subnote_letter, item_numeral)}.
+    """
+    by_id = {s["id"]: s for s in sections}
+
+    # Group children by parent, sorted by order
+    children_by_parent: dict[str, list[dict]] = {}
+    for s in sections:
+        parent = s.get("parent", "")
+        children_by_parent.setdefault(parent, []).append(s)
+    for pid in children_by_parent:
+        children_by_parent[pid].sort(key=lambda s: s.get("order", ""))
+
+    # Level 1 — top-level note containers: parent is a heading
+    top_note_num: dict[str, int] = {}     # note_id → 1-based number
+    heading_ids = {s["id"] for s in sections if s.get("type") == "heading"}
+    for hid in heading_ids:
+        idx = 0
+        for s in children_by_parent.get(hid, []):
+            if s.get("type") == "note":
+                idx += 1
+                top_note_num[s["id"]] = idx
+
+    # Level 2 — subnote containers: parent is a top-level note
+    sub_note_letter: dict[str, str] = {}  # note_id → "a", "b", ...
+    for top_id in top_note_num:
+        idx = 0
+        for s in children_by_parent.get(top_id, []):
+            if s.get("type") == "note":
+                letter = chr(ord('a') + idx) if idx < 26 else str(idx + 1)
+                sub_note_letter[s["id"]] = letter
+                idx += 1
+
+    # Level 3 — item containers: parent is a subnote
+    item_numeral: dict[str, str] = {}     # note_id → "i", "ii", ...
+    for sub_id in sub_note_letter:
+        idx = 0
+        for s in children_by_parent.get(sub_id, []):
+            if s.get("type") == "note":
+                idx += 1
+                item_numeral[s["id"]] = _to_roman(idx)
+
+    # For each content section, walk up the note chain to find all three levels
+    result: dict[str, tuple[str, str, str]] = {}
+    for s in sections:
+        if s.get("type", "") in _CONTAINER_TYPES or not get_title(s):
+            continue
+        sid = s["id"]
+        current = s.get("parent", "")
+        visited = {sid}
+        found_item = ""
+        found_sub = ""
+        found_top = ""
+        while current and current in by_id:
+            if current in visited:
+                break
+            visited.add(current)
+            if current in item_numeral and not found_item:
+                found_item = item_numeral[current]
+            if current in sub_note_letter and not found_sub:
+                found_sub = sub_note_letter[current]
+            if current in top_note_num:
+                found_top = str(top_note_num[current])
+                break
+            current = by_id[current].get("parent", "")
+
+        result[sid] = (found_top, found_sub, found_item)
+
+    return result
+
+
 # ── VISIBILITY PARSING ────────────────────────────────────────────────────────
 
 def _effective_visibility(section: dict, by_id: dict) -> dict:
@@ -836,7 +930,8 @@ def section_rows(section: dict,
                  children_by_parent: dict,
                  lookup: dict,
                  debug: bool,
-                 section_components: dict[str, str] | None = None) -> list[VisibilityRow]:
+                 section_components: dict[str, str] | None = None,
+                 note_numbers: dict[str, str] | None = None) -> list[VisibilityRow]:
     """
     Build VisibilityRow objects for a single titled section.
     Walks the full ancestor chain (including note types) to populate
@@ -845,6 +940,7 @@ def section_rows(section: dict,
     """
     group_title, note_title, subnote_title = get_note_hierarchy(section, by_id)
     content_title = get_title(section)
+    note_number, subnote_letter, item_numeral = (note_numbers or {}).get(section["id"], ("", "", ""))
 
     raw_html = (section.get("specification") or {}).get("content", "")
     fmap     = build_formula_map(section)
@@ -878,6 +974,9 @@ def section_rows(section: dict,
         prev_group  = vr["condition_group"]
         first = (i == 0)
         result.append(VisibilityRow(
+            note_number      = note_number      if first else "",
+            subnote_letter   = subnote_letter   if first else "",
+            item_numeral     = item_numeral     if first else "",
             note_group_title = group_title      if first else "",
             note_title       = note_title       if first else "",
             subnote_title    = subnote_title    if first else "",
@@ -924,8 +1023,8 @@ def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
 
     for row in rows:
         # Non-first condition rows have blank identifiers; only update key when populated
-        key = (row.note_group_title, row.note_title, row.subnote_title, row.content_title)
-        if key != ("", "", "", "") and key != prev_key:
+        key = (row.note_number, row.subnote_letter, row.item_numeral, row.note_group_title, row.note_title, row.subnote_title, row.content_title)
+        if key != ("", "", "", "", "", "", "") and key != prev_key:
             fill_toggle = not fill_toggle
             prev_key    = key
 
@@ -955,19 +1054,24 @@ def load_mock_sections(document_id: str) -> list[dict]:
       - Subnotes overridden to Hide
     """
     return [
-        # Note a
-        {"id": "note_a", "parent": document_id, "order": "1",
-         "title": "Basis of Accounting", "kind": "section",
+        # Note container a (type=note — structural wrapper)
+        {"id": "note_ctr_a", "parent": document_id, "order": "1",
+         "title": "Note", "type": "note",
+         "visibility": {"override": "default", "normallyVisible": True,
+                        "allConditionsNeeded": False, "conditions": []}},
+        # Note a — content child of note container
+        {"id": "note_a", "parent": "note_ctr_a", "order": "1",
+         "title": "Basis of Accounting", "type": "content",
          "visibility": {"override": "default", "normallyVisible": True,
                         "allConditionsNeeded": False, "conditions": []}},
         # Subnote a-i  (no conditions)
         {"id": "sub_ai", "parent": "note_a", "order": "1a",
-         "title": "Basis of Accounting - no cash flow", "kind": "section",
+         "title": "Basis of Accounting - no cash flow", "type": "content",
          "visibility": {"override": "default", "normallyVisible": True,
                         "allConditionsNeeded": False, "conditions": []}},
         # Subnote a-ii  (Show, 2 conditions OR-logic)
         {"id": "sub_aii", "parent": "note_a", "order": "1b",
-         "title": "Basis of Accounting - cash flow", "kind": "section",
+         "title": "Basis of Accounting - cash flow", "type": "content",
          "visibility": {
              "override": "show", "normallyVisible": True,
              "allConditionsNeeded": False,
@@ -979,14 +1083,19 @@ def load_mock_sections(document_id: str) -> list[dict]:
                   "procedureId": "proc_2", "expectedResponse": "Yes",
                   "_label": "Would you like to use a condensed format"},
              ]}},
+        # Note container b
+        {"id": "note_ctr_b", "parent": document_id, "order": "2",
+         "title": "Note", "type": "note",
+         "visibility": {"override": "default", "normallyVisible": True,
+                        "allConditionsNeeded": False, "conditions": []}},
         # Note b
-        {"id": "note_b", "parent": document_id, "order": "2",
-         "title": "Revenue Recognition", "kind": "section",
+        {"id": "note_b", "parent": "note_ctr_b", "order": "1",
+         "title": "Revenue Recognition", "type": "content",
          "visibility": {"override": "default", "normallyVisible": True,
                         "allConditionsNeeded": False, "conditions": []}},
         # Subnote b-i  (Hide)
         {"id": "sub_bi", "parent": "note_b", "order": "2a",
-         "title": "Revenue - accrual basis", "kind": "section",
+         "title": "Revenue - accrual basis", "type": "content",
          "visibility": {"override": "hide", "normallyVisible": False,
                         "allConditionsNeeded": True,
                         "conditions": [
@@ -1197,8 +1306,10 @@ def main() -> None:
             section_components = build_section_components(sections, component_lookup)
             log.info("  %d sections have components", len(section_components))
 
+        note_numbers = compute_note_numbers(sections)
+
         for sec in titled:
-            all_rows.extend(section_rows(sec, by_id, children_by_parent, lookup, args.debug, section_components))
+            all_rows.extend(section_rows(sec, by_id, children_by_parent, lookup, args.debug, section_components, note_numbers))
 
     if not all_rows:
         sys.exit("No data collected. Check your template configuration and cookies.")
