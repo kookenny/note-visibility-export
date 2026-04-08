@@ -156,12 +156,16 @@ def _env_prefix_from_host(host: str) -> str:
     return hostname.split(".")[0].upper()
 
 
-def _obtain_bearer_token(env_prefix: str = "") -> str | None:
+def _obtain_bearer_token(env_prefix: str = "",
+                         host: str | None = None,
+                         tenant: str | None = None) -> str | None:
     """Exchange CW_CLIENT_ID + CW_CLIENT_SECRET for a Bearer token via OAuth.
 
     Looks for prefixed env vars first (e.g. CW_CA_CLIENT_ID) then falls back
     to the generic CW_CLIENT_ID / CW_CLIENT_SECRET.
     """
+    host = host or HOST
+    tenant = tenant or TENANT
     client_id, client_secret = "", ""
     if env_prefix:
         client_id     = os.environ.get(f"CW_{env_prefix}_CLIENT_ID", "").strip()
@@ -171,7 +175,7 @@ def _obtain_bearer_token(env_prefix: str = "") -> str | None:
         client_secret = os.environ.get("CW_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
         return None
-    url = f"{HOST}/{TENANT}/ms/caseware-cloud/api/v1/auth/token"
+    url = f"{host}/{tenant}/ms/caseware-cloud/api/v1/auth/token"
     resp = requests.post(url, json={
         "ClientId": client_id, "ClientSecret": client_secret, "Language": "en",
     }, headers={"Accept": "application/json", "Content-Type": "application/json"},
@@ -183,7 +187,9 @@ def _obtain_bearer_token(env_prefix: str = "") -> str | None:
     return token
 
 
-def make_session(env_prefix: str = "") -> requests.Session:
+def make_session(env_prefix: str = "",
+                 host: str | None = None,
+                 tenant: str | None = None) -> requests.Session:
     """Build a requests.Session using OAuth (preferred) or browser cookies."""
     session = requests.Session()
     session.headers.update({
@@ -192,7 +198,7 @@ def make_session(env_prefix: str = "") -> requests.Session:
     })
 
     # Try OAuth first
-    token = _obtain_bearer_token(env_prefix)
+    token = _obtain_bearer_token(env_prefix, host=host, tenant=tenant)
     if token:
         session.headers["Authorization"] = f"Bearer {token}"
         return session
@@ -214,12 +220,16 @@ def make_session(env_prefix: str = "") -> requests.Session:
 
 def fetch_sections(session: requests.Session,
                    engagement_id: str,
-                   document_id: str) -> list[dict]:
+                   document_id: str,
+                   host: str | None = None,
+                   tenant: str | None = None) -> list[dict]:
     """
     POST to section/get with a document-filter to retrieve every section
     belonging to the given document in one call.
     """
-    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/section/get"
+    host = host or HOST
+    tenant = tenant or TENANT
+    url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/section/get"
     payload = {
         "filter": {
             "filter": {
@@ -267,9 +277,13 @@ def fetch_sections(session: requests.Session,
 
 
 def fetch_component_lookup(session: requests.Session,
-                           engagement_id: str) -> dict[str, str]:
+                           engagement_id: str,
+                           host: str | None = None,
+                           tenant: str | None = None) -> dict[str, str]:
     """Fetch all tags with subKind='component' and return {tag_id: name} map."""
-    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/tag/get"
+    host = host or HOST
+    tenant = tenant or TENANT
+    url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/tag/get"
     log.info("Fetching component tags from %s", url)
     resp = session.post(url, json={}, timeout=30)
     if not resp.ok:
@@ -298,12 +312,17 @@ def build_section_components(sections: list[dict],
     return result
 
 
-def fetch_document_lookup(session: requests.Session, engagement_id: str) -> dict:
+def fetch_document_lookup(session: requests.Session,
+                          engagement_id: str,
+                          host: str | None = None,
+                          tenant: str | None = None) -> dict:
     """
     Fetch all documents in the engagement and return {id: "number name"} map.
     e.g. {"z2HFA1b5TIqLNYrLsb55ZA": "6-15 Financial statements optimiser"}
     """
-    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/document/get"
+    host = host or HOST
+    tenant = tenant or TENANT
+    url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/document/get"
     try:
         resp = session.post(url, json={}, timeout=30)
         if not resp.ok:
@@ -332,9 +351,13 @@ def fetch_document_lookup(session: requests.Session, engagement_id: str) -> dict
 
 def fetch_procedures_for_checklist(session: requests.Session,
                                    engagement_id: str,
-                                   checklist_id: str) -> list[dict]:
+                                   checklist_id: str,
+                                   host: str | None = None,
+                                   tenant: str | None = None) -> list[dict]:
     """Fetch all procedures belonging to a checklist."""
-    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/procedure/get"
+    host = host or HOST
+    tenant = tenant or TENANT
+    url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/procedure/get"
     payload = {"filter": {"filter": {
         "node": "=",
         "left":  {"node": "field", "kind": "procedure", "field": "checklistId"},
@@ -353,9 +376,13 @@ def fetch_procedures_for_checklist(session: requests.Session,
 
 def fetch_procedure_by_id(session: requests.Session,
                           engagement_id: str,
-                          procedure_id: str) -> Optional[dict]:
+                          procedure_id: str,
+                          host: str | None = None,
+                          tenant: str | None = None) -> Optional[dict]:
     """Fetch a single procedure by its ID."""
-    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/procedure/get"
+    host = host or HOST
+    tenant = tenant or TENANT
+    url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/procedure/get"
     payload = {"filter": {"filter": {
         "node": "=",
         "left":  {"node": "field", "kind": "procedure", "field": "id"},
@@ -375,7 +402,9 @@ def fetch_procedure_by_id(session: requests.Session,
 
 def fetch_checklist_name(session: requests.Session,
                          engagement_id: str,
-                         checklist_id: str) -> str:
+                         checklist_id: str,
+                         host: str | None = None,
+                         tenant: str | None = None) -> str:
     """
     Try to resolve a checklist ID to its human-readable name.
     Tries multiple strategies in order:
@@ -384,8 +413,10 @@ def fetch_checklist_name(session: requests.Session,
     2. Walk up the procedure parentId chain to find the root title
     Returns empty string if not resolved.
     """
+    host = host or HOST
+    tenant = tenant or TENANT
     # Strategy 0: the checklist IS a procedure — fetch it directly by its own ID
-    proc = fetch_procedure_by_id(session, engagement_id, checklist_id)
+    proc = fetch_procedure_by_id(session, engagement_id, checklist_id, host=host, tenant=tenant)
     if proc:
         summary = proc.get("summaryNames") or {}
         name = summary.get("en", "") or next(iter(summary.values()), "")
@@ -397,7 +428,7 @@ def fetch_checklist_name(session: requests.Session,
 
     # Strategy 1a: fetch it as a document (document/get by id)
     for endpoint in ("document/get", "checklist/get", "workpaper/get"):
-        url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/{endpoint}"
+        url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/{endpoint}"
         for payload in (
             {"filter": {"filter": {"node": "=",
                 "left": {"node": "field", "kind": endpoint.split("/")[0], "field": "id"},
@@ -427,7 +458,7 @@ def fetch_checklist_name(session: requests.Session,
                 continue
 
     # Strategy 1b: fetch it as a section by id field filter
-    url = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0/section/get"
+    url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/section/get"
     payload = {"filter": {"filter": {
         "node": "=",
         "left":  {"node": "field", "kind": "section", "field": "id"},
@@ -446,7 +477,7 @@ def fetch_checklist_name(session: requests.Session,
         pass
 
     # Strategy 2: walk up the procedure parentId chain
-    procs = fetch_procedures_for_checklist(session, engagement_id, checklist_id)
+    procs = fetch_procedures_for_checklist(session, engagement_id, checklist_id, host=host, tenant=tenant)
     if not procs:
         return ""
 
@@ -457,7 +488,7 @@ def fetch_checklist_name(session: requests.Session,
         if not parent_id or parent_id in seen:
             break
         seen.add(parent_id)
-        parent = fetch_procedure_by_id(session, engagement_id, parent_id)
+        parent = fetch_procedure_by_id(session, engagement_id, parent_id, host=host, tenant=tenant)
         if not parent:
             break
         if parent.get("checklistId", "") != checklist_id:
@@ -473,7 +504,9 @@ def fetch_checklist_name(session: requests.Session,
 
 def build_id_lookup(session: requests.Session,
                     engagement_id: str,
-                    sections: list[dict]) -> dict:
+                    sections: list[dict],
+                    host: str | None = None,
+                    tenant: str | None = None) -> dict:
     """
     For every procedure ID referenced in visibility conditions:
       1. Fetch the procedure object
@@ -490,7 +523,7 @@ def build_id_lookup(session: requests.Session,
     log.info("  %d unique procedure ID(s) to resolve", len(procedure_ids))
 
     # Fetch all documents once — covers checklist name resolution
-    doc_lookup = fetch_document_lookup(session, engagement_id)
+    doc_lookup = fetch_document_lookup(session, engagement_id, host=host, tenant=tenant)
     lookup: dict = dict(doc_lookup)  # seed with document names
 
     # Collect checklist IDs and resolve their names for the Condition Group column
@@ -529,13 +562,13 @@ def build_id_lookup(session: requests.Session,
                     name = get_title(s)
                     break
         if not name:
-            name = fetch_checklist_name(session, engagement_id, cid)
+            name = fetch_checklist_name(session, engagement_id, cid, host=host, tenant=tenant)
         if name:
             lookup[cid] = name
             log.debug("  Checklist %s → '%s'", cid[:12], name)
 
     for idx, pid in enumerate(procedure_ids, start=1):
-        proc = fetch_procedure_by_id(session, engagement_id, pid)
+        proc = fetch_procedure_by_id(session, engagement_id, pid, host=host, tenant=tenant)
         if not proc:
             continue
 
@@ -846,11 +879,6 @@ def _resolve(lookup: dict, id_obj) -> str:
     return lookup.get(raw_id, raw_id[:12])   # fall back to first 12 chars of ID
 
 
-def _resolve_with_id(lookup: dict, id_obj) -> str:
-    """Resolve an id-object to its human-readable name for display in column I."""
-    return _resolve(lookup, id_obj)
-
-
 def _flatten_conditions(conditions: list, lookup: dict,
                         group_label: str = "",
                         is_group: bool = False) -> list[tuple]:
@@ -864,7 +892,7 @@ def _flatten_conditions(conditions: list, lookup: dict,
         ctype = cond.get("type", "")
 
         if ctype == "response":
-            checklist = _resolve_with_id(lookup, cond.get("checklistId"))
+            checklist = _resolve(lookup, cond.get("checklistId"))
             procedure = _resolve(lookup, cond.get("procedureId"))
             response  = _resolve(lookup, cond.get("responseId"))
             rows.append((group_label or checklist, procedure, response, is_group))
@@ -876,7 +904,7 @@ def _flatten_conditions(conditions: list, lookup: dict,
             # Derive a group label from the checklist of the first nested condition
             first_checklist = ""
             if nested:
-                first_checklist = _resolve_with_id(lookup, nested[0].get("checklistId"))
+                first_checklist = _resolve(lookup, nested[0].get("checklistId"))
             label = f"{first_checklist} ({qualifier})" if first_checklist else f"({qualifier})"
             rows.extend(_flatten_conditions(nested, lookup, group_label=label, is_group=True))
 
@@ -1016,7 +1044,8 @@ FILL_B      = PatternFill("solid", fgColor="FFD9E1F2")  # light blue
 ALIGN_TOP   = Alignment(vertical="top", wrap_text=False)
 
 
-def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
+def _build_workbook(rows: list[VisibilityRow]) -> openpyxl.Workbook:
+    """Build a formatted Excel workbook from visibility rows."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Note Visibility"
@@ -1030,52 +1059,10 @@ def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
         cell.alignment = ALIGN_TOP
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    ws.freeze_panes           = "A2"
-    ws.auto_filter.ref        = f"A1:{get_column_letter(len(COLUMN_HEADERS))}1"
-
-    # Data rows with alternating fill per content title (column D)
-    fill_toggle = False
-    prev_key    = None
-
-    for row in rows:
-        # Non-first condition rows have blank identifiers; only update key when populated
-        key = (row.note_number, row.subnote_letter, row.item_numeral, row.note_group_title, row.note_title, row.subnote_title, row.content_title)
-        if key != ("", "", "", "", "", "", "") and key != prev_key:
-            fill_toggle = not fill_toggle
-            prev_key    = key
-
-        ws.append(list(astuple(row)))
-        fill = FILL_B if fill_toggle else FILL_A
-        for col_idx, cell in enumerate(ws[ws.max_row], start=1):
-            cell.fill      = fill
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
-
-    try:
-        wb.save(output_path)
-    except PermissionError:
-        raise RuntimeError(
-            f"Cannot write to '{output_path}'. "
-            "If the file is open in Excel, close it and run again."
-        )
-
-
-def write_excel_to_bytes(rows: list[VisibilityRow]) -> bytes:
-    """Write the Excel workbook to an in-memory buffer and return raw bytes."""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Note Visibility"
-
-    ws.append(COLUMN_HEADERS)
-    for col_idx, (cell, width) in enumerate(
-            zip(ws[1], COLUMN_WIDTHS), start=1):
-        cell.font      = HEADER_FONT
-        cell.fill      = HEADER_FILL
-        cell.alignment = ALIGN_TOP
-        ws.column_dimensions[get_column_letter(col_idx)].width = width
-
     ws.freeze_panes    = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMN_HEADERS))}1"
 
+    # Data rows with alternating fill per content title
     fill_toggle = False
     prev_key    = None
 
@@ -1093,6 +1080,23 @@ def write_excel_to_bytes(rows: list[VisibilityRow]) -> bytes:
             cell.fill      = fill
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
+    return wb
+
+
+def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
+    wb = _build_workbook(rows)
+    try:
+        wb.save(output_path)
+    except PermissionError:
+        raise RuntimeError(
+            f"Cannot write to '{output_path}'. "
+            "If the file is open in Excel, close it and run again."
+        )
+
+
+def write_excel_to_bytes(rows: list[VisibilityRow]) -> bytes:
+    """Write the Excel workbook to an in-memory buffer and return raw bytes."""
+    wb = _build_workbook(rows)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -1110,49 +1114,42 @@ def generate_report_bytes(
     Generate an Excel report for one template and return it as bytes.
     Called by the web frontend.  Raises on error instead of sys.exit().
     """
-    global HOST, TENANT
-    old_host, old_tenant = HOST, TENANT
-    if host:
-        HOST = host
-    if tenant:
-        TENANT = tenant
-    try:
-        env_prefix = _env_prefix_from_host(host) if host else ""
-        session = make_session(env_prefix)
-        sections = fetch_sections(session, engagement_id, document_id)
-        if not sections:
-            raise ValueError(
-                f"No sections returned for engagement={engagement_id}, "
-                f"document={document_id}"
-            )
+    host = host or HOST
+    tenant = tenant or TENANT
+    env_prefix = _env_prefix_from_host(host)
+    session = make_session(env_prefix, host=host, tenant=tenant)
+    sections = fetch_sections(session, engagement_id, document_id, host=host, tenant=tenant)
+    if not sections:
+        raise ValueError(
+            f"No sections returned for engagement={engagement_id}, "
+            f"document={document_id}"
+        )
 
-        by_id   = {s["id"]: s for s in sections}
-        titled  = ordered_titled_sections(sections)
+    by_id   = {s["id"]: s for s in sections}
+    titled  = ordered_titled_sections(sections)
 
-        children_by_parent: dict = {}
-        for s in sections:
-            pid = s.get("parent", "")
-            if pid in by_id:
-                children_by_parent.setdefault(pid, []).append(s)
+    children_by_parent: dict = {}
+    for s in sections:
+        pid = s.get("parent", "")
+        if pid in by_id:
+            children_by_parent.setdefault(pid, []).append(s)
 
-        lookup = build_id_lookup(session, engagement_id, sections)
-        component_lookup = fetch_component_lookup(session, engagement_id)
-        section_components = build_section_components(sections, component_lookup)
-        note_numbers = compute_note_numbers(sections)
+    lookup = build_id_lookup(session, engagement_id, sections, host=host, tenant=tenant)
+    component_lookup = fetch_component_lookup(session, engagement_id, host=host, tenant=tenant)
+    section_components = build_section_components(sections, component_lookup)
+    note_numbers = compute_note_numbers(sections)
 
-        all_rows: list[VisibilityRow] = []
-        for sec in titled:
-            all_rows.extend(section_rows(
-                sec, by_id, children_by_parent, lookup,
-                False, section_components, note_numbers,
-            ))
+    all_rows: list[VisibilityRow] = []
+    for sec in titled:
+        all_rows.extend(section_rows(
+            sec, by_id, children_by_parent, lookup,
+            False, section_components, note_numbers,
+        ))
 
-        if not all_rows:
-            raise ValueError("No data collected. Check engagement/document IDs.")
+    if not all_rows:
+        raise ValueError("No data collected. Check engagement/document IDs.")
 
-        return write_excel_to_bytes(all_rows)
-    finally:
-        HOST, TENANT = old_host, old_tenant
+    return write_excel_to_bytes(all_rows)
 
 
 # ── MOCK DATA ─────────────────────────────────────────────────────────────────
@@ -1188,11 +1185,11 @@ def load_mock_sections(document_id: str) -> list[dict]:
              "override": "show", "normallyVisible": True,
              "allConditionsNeeded": False,
              "conditions": [
-                 {"type": "response", "checklistId": "checklist_1",
-                  "procedureId": "proc_1", "expectedResponse": "Yes",
+                 {"type": "response", "checklistId": {"id": "checklist_1"},
+                  "procedureId": {"id": "proc_1"}, "responseId": {"id": "resp_1"},
                   "_label": "Statement of cash flows"},
-                 {"type": "response", "checklistId": "checklist_1",
-                  "procedureId": "proc_2", "expectedResponse": "Yes",
+                 {"type": "response", "checklistId": {"id": "checklist_1"},
+                  "procedureId": {"id": "proc_2"}, "responseId": {"id": "resp_2"},
                   "_label": "Would you like to use a condensed format"},
              ]}},
         # Note container b
@@ -1219,15 +1216,18 @@ def load_mock_sections(document_id: str) -> list[dict]:
 
 # ── ENDPOINT PROBE (temporary diagnostic tool) ───────────────────────────────
 
-def probe_endpoints(session: requests.Session, engagement_id: str) -> None:
+def probe_endpoints(session: requests.Session, engagement_id: str,
+                    host: str | None = None, tenant: str | None = None) -> None:
     """
     Try a set of candidate endpoints with the known checklist ID to find
     where procedure/response names are stored. Prints a summary and exits.
     """
+    host = host or HOST
+    tenant = tenant or TENANT
     known_checklist_id = "z2HFA1b5TIqLNYrLsb55ZA"
     known_procedure_id = "HZKIXcUORaOovqz2d567RA"
     known_response_id  = "OpsVFmLFSHajjVr-hN5Duw"
-    base = f"{HOST}/{TENANT}/e/eng/{engagement_id}/api/v1.12.0"
+    base = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0"
 
     def mk_filter(kind, field, value):
         return {"filter": {"filter": {"node": "=",
