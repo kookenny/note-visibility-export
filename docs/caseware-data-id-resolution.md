@@ -88,3 +88,15 @@ Recommended approach for bulk ID resolution:
 5. **Result**: flat `{id: name}` dict covering procedure names, response option names, and checklist/document names
 
 This lookup dict is then used during row generation to resolve all condition references in O(1).
+
+## Self-Contained Condition Types
+
+Not all condition types require API lookups. These are resolved directly from their condition object fields:
+
+### `organization_type`
+
+The condition object contains `customOrganizationTypeId` (a PascalCase string like `"GeneralPartnership"`) and `organizationType` (broad category like `"partnership"`). Resolved via a static label mapping (e.g. `"GeneralPartnership"` → `"General Partnership"`). Falls back to PascalCase word splitting for unknown values. No API endpoint exists for org type definitions.
+
+### `consolidation`
+
+The condition object contains a boolean `consolidated` field. Displayed as `"Consolidated"` or `"Not consolidated"`. No lookup needed.

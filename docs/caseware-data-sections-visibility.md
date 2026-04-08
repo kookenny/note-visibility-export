@@ -112,7 +112,7 @@ Resolution pattern — walk up the parent chain to inherit from the nearest ance
 
 ### Condition Structure
 
-The `conditions` array contains two types of objects:
+The `conditions` array contains four types of objects:
 
 **1. Flat `response` condition:**
 ```json
@@ -138,6 +138,29 @@ The `conditions` array contains two types of objects:
 ```
 
 Condition groups have their own `allConditionsNeeded` flag (typically `false` = OR within the group).
+
+**3. `organization_type` condition (entity-level):**
+```json
+{
+  "id": "Ywfng87wSSiYf-6lkllUoQ",
+  "type": "organization_type",
+  "organizationType": "corporation",
+  "customOrganizationTypeId": "CorporationControlledPrivateCorporation",
+  "countryCode": "CA"
+}
+```
+
+References the entity's organization type set in Caseware Collaborate (Edit Entity > General Info). Self-contained — no API lookup needed. `customOrganizationTypeId` is a PascalCase string matching the specific org type (e.g. "GeneralPartnership", "SCorporation"). `organizationType` is the broad category ("corporation", "partnership", "individual", "public_company"). `countryCode` indicates which country's org type list applies (CA and US have different lists).
+
+**4. `consolidation` condition (entity-level):**
+```json
+{
+  "type": "consolidation",
+  "consolidated": true
+}
+```
+
+Boolean condition based on whether the entity is a consolidated entity. Self-contained — no API lookup needed.
 
 ## Section Content Extraction
 
