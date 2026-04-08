@@ -1,22 +1,40 @@
-# CaseWare Note Visibility Extractor
+# Caseware Note Visibility Extractor
 
 ## Project Purpose
-One-time snapshot tool that extracts note/subnote visibility settings from CaseWare Cloud Smart Engagements (SE) author templates and writes them to an Excel spreadsheet.
+One-time snapshot tool that extracts note/subnote visibility settings from Caseware Cloud Smart Engagements (SE) author templates and writes them to an Excel spreadsheet.
 
 ## Project Structure
 ```
 tools/              # Python scripts
   note_visibility_report.py
+web/                # Flask web frontend
+  app.py            #   Backend (serves UI + /api/generate endpoint)
+  static/
+    index.html      #   Single-page UI
+    styles.css      #   Caseware design system CSS
+    app.js          #   URL parsing, fetch, download logic
 workflows/          # SOPs
   export_note_visibility.md
 .tmp/               # Output files (gitignored, regenerated as needed)
 .env                # CW_CLIENT_ID, CW_CLIENT_SECRET (OAuth) or CW_COOKIES (gitignored)
+requirements.txt    # Python dependencies
 ```
 
 See [workflows/export_note_visibility.md](workflows/export_note_visibility.md) for step-by-step run instructions.
 
+## Web UI
+The preferred way to generate reports. Paste a Caseware document URL and click Generate.
+
+```bash
+pip install -r requirements.txt
+python web/app.py
+# Open http://localhost:5000
+```
+
+The URL field auto-extracts `tenant`, `engagementId`, and `documentId` from the pasted URL. The optional Report Name field controls the download filename.
+
 ## API Details
-- **Platform:** CaseWare Cloud (internal), hosted at `https://ca.cwcloudpartner.com`
+- **Platform:** Caseware Cloud (internal), hosted at `https://ca.cwcloudpartner.com`
 - **Auth:** OAuth client credentials (preferred, 30-min token) or cookie-based (JSESSIONID + secid fallback)
 - **Main endpoint:** `POST /{tenant}/e/eng/{engagementId}/api/v1.12.0/section/get`
 - **Filter pattern to fetch all sections for a document:**

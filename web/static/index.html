@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Note Visibility Export</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="page-container">
+        <header class="page-header">
+            <h1>Note Visibility Export</h1>
+            <p>Generate an Excel report of note visibility settings from a Caseware SE author template.</p>
+        </header>
+
+        <main class="card">
+            <h2>Generate Report</h2>
+
+            <div class="form-group">
+                <label for="cwUrl">Caseware Document URL</label>
+                <input type="text" id="cwUrl"
+                       placeholder="https://ca.cwcloudpartner.com/ca-develop/e/eng/.../index.jsp#/efinancials/...">
+                <div class="helper-text" id="parsedInfo">
+                    Paste a Caseware document URL to auto-extract IDs
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="templateName">Report Name <span style="font-weight:400; color:rgba(0,0,0,0.60)">(optional)</span></label>
+                <input type="text" id="templateName" placeholder="e.g. My Template">
+            </div>
+
+            <div class="actions">
+                <button id="generateBtn" class="btn-primary">Generate Report</button>
+            </div>
+
+            <div id="status" class="status-area" hidden>
+                <div class="spinner"></div>
+                <span>Generating report&hellip; this may take 15&ndash;30 seconds</span>
+            </div>
+
+            <div id="error" class="error-message" hidden></div>
+            <div id="success" class="success-message" hidden></div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

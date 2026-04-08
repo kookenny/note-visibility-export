@@ -38,6 +38,7 @@ HOW TO FIND engagementId AND documentId
 """
 
 import argparse
+import io
 import os
 import sys
 import json
@@ -184,8 +185,8 @@ def make_session() -> requests.Session:
     # Fall back to cookie auth
     cookies = os.environ.get("CW_COOKIES", "").strip()
     if not cookies:
-        sys.exit(
-            "ERROR: No auth credentials found.\n"
+        raise RuntimeError(
+            "No auth credentials found. "
             "Set CW_CLIENT_ID + CW_CLIENT_SECRET for OAuth, "
             "or CW_COOKIES for cookie auth."
         )
@@ -217,13 +218,13 @@ def fetch_sections(session: requests.Session,
     resp = session.post(url, json=payload, timeout=30)
 
     if resp.status_code == 401:
-        sys.exit(
-            "ERROR: 401 Unauthorised — your session cookies have expired.\n"
+        raise RuntimeError(
+            "401 Unauthorised — your session cookies have expired. "
             "Re-copy CW_JSESSIONID and CW_SECID from the browser and try again."
         )
     if not resp.ok:
-        sys.exit(
-            f"ERROR: {resp.status_code} from {url}\n{resp.text[:500]}"
+        raise RuntimeError(
+            f"{resp.status_code} from {url}\n{resp.text[:500]}"
         )
 
     data = resp.json()
@@ -1037,10 +1038,105 @@ def write_excel(rows: list[VisibilityRow], output_path: str) -> None:
     try:
         wb.save(output_path)
     except PermissionError:
-        sys.exit(
-            f"ERROR: Cannot write to '{output_path}'.\n"
+        raise RuntimeError(
+            f"Cannot write to '{output_path}'. "
             "If the file is open in Excel, close it and run again."
         )
+
+
+def write_excel_to_bytes(rows: list[VisibilityRow]) -> bytes:
+    """Write the Excel workbook to an in-memory buffer and return raw bytes."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Note Visibility"
+
+    ws.append(COLUMN_HEADERS)
+    for col_idx, (cell, width) in enumerate(
+            zip(ws[1], COLUMN_WIDTHS), start=1):
+        cell.font      = HEADER_FONT
+        cell.fill      = HEADER_FILL
+        cell.alignment = ALIGN_TOP
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    ws.freeze_panes    = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMN_HEADERS))}1"
+
+    fill_toggle = False
+    prev_key    = None
+
+    for row in rows:
+        key = (row.note_number, row.subnote_letter, row.item_numeral,
+               row.note_group_title, row.note_title, row.subnote_title,
+               row.content_title)
+        if key != ("", "", "", "", "", "", "") and key != prev_key:
+            fill_toggle = not fill_toggle
+            prev_key    = key
+
+        ws.append(list(astuple(row)))
+        fill = FILL_B if fill_toggle else FILL_A
+        for col_idx, cell in enumerate(ws[ws.max_row], start=1):
+            cell.fill      = fill
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def generate_report_bytes(
+    engagement_id: str,
+    document_id: str,
+    template_name: str = "Report",
+    host: str | None = None,
+    tenant: str | None = None,
+) -> bytes:
+    """
+    Generate an Excel report for one template and return it as bytes.
+    Called by the web frontend.  Raises on error instead of sys.exit().
+    """
+    global HOST, TENANT
+    old_host, old_tenant = HOST, TENANT
+    if host:
+        HOST = host
+    if tenant:
+        TENANT = tenant
+    try:
+        session = make_session()
+        sections = fetch_sections(session, engagement_id, document_id)
+        if not sections:
+            raise ValueError(
+                f"No sections returned for engagement={engagement_id}, "
+                f"document={document_id}"
+            )
+
+        by_id   = {s["id"]: s for s in sections}
+        titled  = ordered_titled_sections(sections)
+
+        children_by_parent: dict = {}
+        for s in sections:
+            pid = s.get("parent", "")
+            if pid in by_id:
+                children_by_parent.setdefault(pid, []).append(s)
+
+        lookup = build_id_lookup(session, engagement_id, sections)
+        component_lookup = fetch_component_lookup(session, engagement_id)
+        section_components = build_section_components(sections, component_lookup)
+        note_numbers = compute_note_numbers(sections)
+
+        all_rows: list[VisibilityRow] = []
+        for sec in titled:
+            all_rows.extend(section_rows(
+                sec, by_id, children_by_parent, lookup,
+                False, section_components, note_numbers,
+            ))
+
+        if not all_rows:
+            raise ValueError("No data collected. Check engagement/document IDs.")
+
+        return write_excel_to_bytes(all_rows)
+    finally:
+        HOST, TENANT = old_host, old_tenant
 
 
 # ── MOCK DATA ─────────────────────────────────────────────────────────────────
@@ -1252,7 +1348,10 @@ def main() -> None:
     if not TEMPLATES:
         sys.exit("ERROR: No templates configured. Edit the TEMPLATES list.")
 
-    session = None if args.mock else make_session()
+    try:
+        session = None if args.mock else make_session()
+    except RuntimeError as e:
+        sys.exit(f"ERROR: {e}")
 
     if args.probe:
         _, engagement_id, _ = TEMPLATES[0]
