@@ -16,7 +16,7 @@ web/                # Flask web frontend
 workflows/          # SOPs
   export_note_visibility.md
 .tmp/               # Output files (gitignored, regenerated as needed)
-.env                # CW_CLIENT_ID, CW_CLIENT_SECRET (OAuth) or CW_COOKIES (gitignored)
+.env                # Per-environment OAuth credentials (CW_CA_*, CW_US_*, etc.) or CW_COOKIES (gitignored)
 requirements.txt    # Python dependencies
 ```
 
@@ -35,7 +35,7 @@ The URL field auto-extracts `tenant`, `engagementId`, and `documentId` from the 
 
 ## API Details
 - **Platform:** Caseware Cloud (internal), hosted at `https://ca.cwcloudpartner.com`
-- **Auth:** OAuth client credentials (preferred, 30-min token) or cookie-based (JSESSIONID + secid fallback)
+- **Auth:** Per-environment OAuth client credentials (preferred, 30-min token) or cookie-based fallback. Credentials are keyed by hostname prefix: `CW_CA_CLIENT_ID` for `ca.cwcloudpartner.com`, `CW_US_CLIENT_ID` for `us.cwcloudpartner.com`, etc. Falls back to generic `CW_CLIENT_ID` if no prefixed vars exist.
 - **Main endpoint:** `POST /{tenant}/e/eng/{engagementId}/api/v1.12.0/section/get`
 - **Filter pattern to fetch all sections for a document:**
   ```json
@@ -106,7 +106,7 @@ Key finding: Visibility conditions primarily live on `[note]` container sections
 Key finding: The Hide/Show direction is derived from `visibility.normallyVisible`, NOT from `visibility.override`. `normallyVisible=false` → "Show when" (normally hidden, shows when conditions met; 418/420 note sections); `normallyVisible=true` → "Hide when" (normally visible, hides when conditions met). The `override` field is almost always `"default"` when conditions are present.
 
 ## Confirmed Working
-- Auth: OAuth via `CW_CLIENT_ID` + `CW_CLIENT_SECRET` (preferred), falls back to browser cookie string via `CW_COOKIES`
+- Auth: Per-environment OAuth via `CW_{PREFIX}_CLIENT_ID` + `CW_{PREFIX}_CLIENT_SECRET` (e.g. `CW_CA_*`, `CW_US_*`); falls back to generic `CW_CLIENT_ID` + `CW_CLIENT_SECRET`, then to browser cookie string via `CW_COOKIES`
 - Main endpoint: `POST /api/v1.12.0/section/get` with document filter returns `{"count": N, "objects": [...]}`
 - Section hierarchy: container types (`note`, `heading`, `settings`, `toc`) excluded from `ordered_titled_sections()`; `find_nearest_titled_ancestor()` also skips container types
 - Section content: extracted from `specification.content` HTML field, stripped to plain text; placeholder spans wrapped in `(( ))`; dynamic-text formula spans resolved via section attachables and wrapped in `[[ ]]`; untitled child sections (text bodies) are merged into the parent section's content column

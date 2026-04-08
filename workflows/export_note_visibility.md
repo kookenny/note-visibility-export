@@ -4,7 +4,14 @@
 Extract note/subnote visibility settings from a Caseware Cloud SE author template and write them to an Excel spreadsheet.
 
 ## Prerequisites
-- `.env` with `CW_CLIENT_ID` + `CW_CLIENT_SECRET` (OAuth, preferred) or `CW_COOKIES` (cookie fallback)
+- `.env` with per-environment OAuth credentials (preferred) or `CW_COOKIES` (cookie fallback):
+  ```
+  CW_CA_CLIENT_ID=...    # for ca.cwcloudpartner.com
+  CW_CA_CLIENT_SECRET=...
+  CW_US_CLIENT_ID=...    # for us.cwcloudpartner.com
+  CW_US_CLIENT_SECRET=...
+  ```
+  The correct credentials are auto-selected based on the hostname in the pasted URL.
 - Python dependencies: `pip install -r requirements.txt`
 
 ## Option A: Web UI (recommended)
@@ -18,10 +25,12 @@ Extract note/subnote visibility settings from a Caseware Cloud SE author templat
 ## Option B: CLI
 
 ### 1. Configure auth
-Set OAuth credentials in `.env` (preferred):
+Set per-environment OAuth credentials in `.env` (preferred):
 ```
-CW_CLIENT_ID=...
-CW_CLIENT_SECRET=...
+CW_CA_CLIENT_ID=...
+CW_CA_CLIENT_SECRET=...
+CW_US_CLIENT_ID=...
+CW_US_CLIENT_SECRET=...
 ```
 
 Or fall back to browser cookies:

@@ -150,10 +150,25 @@ def build_formula_map(section: dict) -> dict[str, str]:
 
 # ── SESSION ───────────────────────────────────────────────────────────────────
 
-def _obtain_bearer_token() -> str | None:
-    """Exchange CW_CLIENT_ID + CW_CLIENT_SECRET for a Bearer token via OAuth."""
-    client_id     = os.environ.get("CW_CLIENT_ID", "").strip()
-    client_secret = os.environ.get("CW_CLIENT_SECRET", "").strip()
+def _env_prefix_from_host(host: str) -> str:
+    """Derive an env-var prefix from the hostname: 'ca.cwcloudpartner.com' → 'CA'."""
+    hostname = host.replace("https://", "").replace("http://", "").split("/")[0]
+    return hostname.split(".")[0].upper()
+
+
+def _obtain_bearer_token(env_prefix: str = "") -> str | None:
+    """Exchange CW_CLIENT_ID + CW_CLIENT_SECRET for a Bearer token via OAuth.
+
+    Looks for prefixed env vars first (e.g. CW_CA_CLIENT_ID) then falls back
+    to the generic CW_CLIENT_ID / CW_CLIENT_SECRET.
+    """
+    client_id, client_secret = "", ""
+    if env_prefix:
+        client_id     = os.environ.get(f"CW_{env_prefix}_CLIENT_ID", "").strip()
+        client_secret = os.environ.get(f"CW_{env_prefix}_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        client_id     = os.environ.get("CW_CLIENT_ID", "").strip()
+        client_secret = os.environ.get("CW_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
         return None
     url = f"{HOST}/{TENANT}/ms/caseware-cloud/api/v1/auth/token"
@@ -168,7 +183,7 @@ def _obtain_bearer_token() -> str | None:
     return token
 
 
-def make_session() -> requests.Session:
+def make_session(env_prefix: str = "") -> requests.Session:
     """Build a requests.Session using OAuth (preferred) or browser cookies."""
     session = requests.Session()
     session.headers.update({
@@ -177,7 +192,7 @@ def make_session() -> requests.Session:
     })
 
     # Try OAuth first
-    token = _obtain_bearer_token()
+    token = _obtain_bearer_token(env_prefix)
     if token:
         session.headers["Authorization"] = f"Bearer {token}"
         return session
@@ -1102,7 +1117,8 @@ def generate_report_bytes(
     if tenant:
         TENANT = tenant
     try:
-        session = make_session()
+        env_prefix = _env_prefix_from_host(host) if host else ""
+        session = make_session(env_prefix)
         sections = fetch_sections(session, engagement_id, document_id)
         if not sections:
             raise ValueError(
