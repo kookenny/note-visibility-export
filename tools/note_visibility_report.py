@@ -879,6 +879,60 @@ def _resolve(lookup: dict, id_obj) -> str:
     return lookup.get(raw_id, raw_id[:12])   # fall back to first 12 chars of ID
 
 
+# Known customOrganizationTypeId → human-readable label mapping.
+# Covers Canada and US org types from the Edit Entity UI.
+_ORG_TYPE_LABELS: dict[str, str] = {
+    # Canada
+    "CorporationControlledPrivateCorporation": "Canadian Controlled Private Corporation (CCPC)",
+    "CorporationControlledPublicCorporation": "Corporation Controlled by a Public Corporation",
+    "OtherPrivateCorporation": "Other Private Corporation",
+    "PublicCompany": "Public Company",
+    "Individual": "Individual",
+    "Coownership": "Co-ownership",
+    "GeneralPartnership": "General Partnership",
+    "LimitedPartnership": "Limited Partnership",
+    "LimitedLiabilityPartnership": "Limited Liability Partnership",
+    "JointVenture": "Joint Venture",
+    "Trust": "Trust",
+    "Cooperative": "Cooperative",
+    "PensionFunds": "Pension Funds",
+    "RegisteredCharity": "Registered Charity",
+    "NotForProfit": "Not For Profit",
+    "Government": "Government",
+    # US
+    "LimitedLiabilityCompany": "Limited Liability Company (LLC)",
+    "CCorporation": "C-Corporation",
+    "SCorporation": "S-Corporation",
+    "SoleProprietorship": "Sole Proprietorship",
+    "Partnership": "Partnership",
+    "NotForProfitPrivate": "Not for Profit - Private",
+    "NotForProfitPublic": "Not for Profit - Public",
+    "PublicFoundation": "Public Foundation",
+    "PrivateFoundation": "Private Foundation",
+}
+
+
+def _split_pascal_case(s: str) -> str:
+    """Split a PascalCase string into words: 'GeneralPartnership' → 'General Partnership'."""
+    return re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", s)
+
+
+def _resolve_org_type(cond: dict) -> str:
+    """Resolve an organization_type condition to a human-readable name.
+
+    Uses customOrganizationTypeId (specific type) with a known label mapping,
+    falling back to PascalCase splitting for unknown values.
+    """
+    custom_id = cond.get("customOrganizationTypeId", "")
+    if custom_id:
+        return _ORG_TYPE_LABELS.get(custom_id, _split_pascal_case(custom_id))
+    # Fall back to the broad category field
+    org_type = cond.get("organizationType", "")
+    if org_type:
+        return _ORG_TYPE_LABELS.get(org_type, _split_pascal_case(org_type))
+    return cond.get("id", "unknown")[:12]
+
+
 def _flatten_conditions(conditions: list, lookup: dict,
                         group_label: str = "",
                         is_group: bool = False) -> list[tuple]:
@@ -907,6 +961,16 @@ def _flatten_conditions(conditions: list, lookup: dict,
                 first_checklist = _resolve(lookup, nested[0].get("checklistId"))
             label = f"{first_checklist} ({qualifier})" if first_checklist else f"({qualifier})"
             rows.extend(_flatten_conditions(nested, lookup, group_label=label, is_group=True))
+
+        elif ctype == "organization_type":
+            log.debug("ORG_TYPE condition (full): %s", json.dumps(cond, indent=2))
+            org_name = _resolve_org_type(cond)
+            rows.append((group_label, "Organization Type", org_name, is_group))
+
+        elif ctype == "consolidation":
+            consolidated = cond.get("consolidated", False)
+            label = "Consolidated" if consolidated else "Not consolidated"
+            rows.append((group_label, "Consolidation", label, is_group))
 
         else:
             # Unknown condition type — show raw type so nothing is silently dropped
@@ -1202,7 +1266,7 @@ def load_mock_sections(document_id: str) -> list[dict]:
          "title": "Revenue Recognition", "type": "content",
          "visibility": {"override": "default", "normallyVisible": True,
                         "allConditionsNeeded": False, "conditions": []}},
-        # Subnote b-i  (Hide)
+        # Subnote b-i  (Hide — consolidation condition)
         {"id": "sub_bi", "parent": "note_b", "order": "2a",
          "title": "Revenue - accrual basis", "type": "content",
          "visibility": {"override": "hide", "normallyVisible": False,
@@ -1210,6 +1274,21 @@ def load_mock_sections(document_id: str) -> list[dict]:
                         "conditions": [
                             {"type": "consolidation", "consolidated": True,
                              "_label": "Consolidated entity"}
+                        ]}},
+        # Subnote b-ii  (Show when any — organization_type conditions)
+        {"id": "sub_bii", "parent": "note_b", "order": "2b",
+         "title": "Revenue - partnership", "type": "content",
+         "visibility": {"override": "default", "normallyVisible": False,
+                        "allConditionsNeeded": False,
+                        "conditions": [
+                            {"id": "org_cond_1", "type": "organization_type",
+                             "organizationType": "partnership",
+                             "customOrganizationTypeId": "GeneralPartnership",
+                             "countryCode": "CA"},
+                            {"id": "org_cond_2", "type": "organization_type",
+                             "organizationType": "partnership",
+                             "customOrganizationTypeId": "LimitedPartnership",
+                             "countryCode": "CA"},
                         ]}},
     ]
 
@@ -1365,7 +1444,7 @@ def main() -> None:
         sys.exit("ERROR: No templates configured. Edit the TEMPLATES list.")
 
     try:
-        session = None if args.mock else make_session()
+        session = None if args.mock else make_session(_env_prefix_from_host(HOST))
     except RuntimeError as e:
         sys.exit(f"ERROR: {e}")
 
@@ -1414,7 +1493,16 @@ def main() -> None:
         # Build lookup: fetch each condition ID individually to resolve to names
         lookup: dict = {}
         section_components: dict[str, str] = {}
-        if not args.mock:
+        if args.mock:
+            # Provide mock lookup entries for testing
+            lookup = {
+                "proc_1": "Statement of cash flows",
+                "proc_2": "Would you like to use a condensed format",
+                "resp_1": "Yes",
+                "resp_2": "Yes",
+                "checklist_1": "Financial statements optimiser",
+            }
+        else:
             lookup = build_id_lookup(session, engagement_id, sections)
             log.info("  %d names resolved", len(lookup))
             component_lookup = fetch_component_lookup(session, engagement_id)

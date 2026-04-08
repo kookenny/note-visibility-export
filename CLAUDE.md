@@ -111,7 +111,7 @@ Key finding: The Hide/Show direction is derived from `visibility.normallyVisible
 - Section hierarchy: container types (`note`, `heading`, `settings`, `toc`) excluded from `ordered_titled_sections()`; `find_nearest_titled_ancestor()` also skips container types
 - Section content: extracted from `specification.content` HTML field, stripped to plain text; placeholder spans wrapped in `(( ))`; dynamic-text formula spans resolved via section attachables and wrapped in `[[ ]]`; untitled child sections (text bodies) are merged into the parent section's content column
 - Visibility settings: `_effective_visibility()` walks up parent chain to inherit conditions from `[note]` containers; Hide/Show direction derived from `normallyVisible` (false→"Hide when", true→"Show when"); `override` field rarely set to anything other than `"default"`
-- Condition structure confirmed: top-level `conditions` array contains flat `response` objects and `condition_group` objects (nested OR groups)
+- Condition structure confirmed: top-level `conditions` array contains flat `response` objects, `condition_group` objects (nested OR groups), `organization_type` conditions (entity-level org type), and `consolidation` conditions
 - Components: `section.tagging.component` maps `{categoryId: [tagId]}` → resolved via `tag/get` endpoint filtering for `subKind: "component"`; tag `name` field has the human-readable label (e.g. "NFP")
 
 ## Condition ID Resolution (confirmed working)
@@ -130,6 +130,17 @@ Key finding: `checklistId.id` in conditions points to the **content ID** of the 
 
 The `build_id_lookup()` function fetches every unique `procedureId` individually and builds a flat `{id: name}` dict covering both procedure names and response option names.
 
+## Organization Type Conditions
+Conditions with `type: "organization_type"` reference entity-level organization types (e.g. "CCPC", "S-Corporation") set on the Entity in Caseware Collaborate. The condition object is self-contained with these fields:
+- `organizationType` — broad category string (e.g. `"corporation"`, `"partnership"`, `"individual"`, `"public_company"`)
+- `customOrganizationTypeId` — specific type as PascalCase string (e.g. `"CorporationControlledPrivateCorporation"`, `"GeneralPartnership"`)
+- `countryCode` — e.g. `"CA"`, `"US"`
+
+Resolution uses a static `_ORG_TYPE_LABELS` mapping (covers CA and US org types). Falls back to PascalCase splitting for unknown values. No API call needed.
+
+## Consolidation Conditions
+Conditions with `type: "consolidation"` have a boolean `consolidated` field. Displayed as Condition Name = "Consolidation", Expected Response = "Consolidated" or "Not consolidated".
+
 ## Column Layout (current)
 | # | Column | Source |
 |---|--------|--------|
@@ -140,6 +151,6 @@ The `build_id_lookup()` function fetches every unique `procedureId` individually
 | E | Section Content | `specification.content` stripped of HTML; placeholders in `(( ))`, dynamic text in `[[ ]]` |
 | F | Visibility | "Hide when" / "Show when" / "Hide" / "Show" / "Use default settings" — shown only on the first condition row per section |
 | G | Condition Group | checklist name — shown only on the first row of each group |
-| H | Condition Name | procedure name from `summaryNames.en` or stripped `text` |
-| I | Expected Response | response label from `settings.responseSets[].responses[]` |
+| H | Condition Name | procedure name from `summaryNames.en` or stripped `text`; or "Organization Type" / "Consolidation" for entity-level conditions |
+| I | Expected Response | response label from `settings.responseSets[].responses[]`; or org type name / "Consolidated" for entity-level conditions |
 | J | Components | comma-separated component tag names from `tagging.component` |
