@@ -162,6 +162,43 @@ References the entity's organization type set in Caseware Collaborate (Edit Enti
 
 Boolean condition based on whether the entity is a consolidated entity. Self-contained — no API lookup needed.
 
+**5. `rmm_rank` condition (checklist-specific — RMM assessment):**
+```json
+{
+  "type": "rmm_rank",
+  "tagId": {"id": "area-tag-id"},
+  "assertionIds": ["baseassertion-tag-id-1", "baseassertion-tag-id-2"],
+  "rmm": "medium",
+  "operator": "ge"
+}
+```
+
+Risk of Material Misstatement rank condition. References a financial statement area (`tagId`, subKind=`area`) and baseassertion tags (`assertionIds`, subKind=`baseassertion`). Resolve via `tag/get`. `rmm` is `"low"` | `"medium"` | `"high"`. `operator` is `"ge"` (>=) | `"gt"` (>) | `"eq"` (=). Found on checklist procedures, not note sections.
+
+**6. `enum_value` condition (checklist-specific — visibility form):**
+```json
+{
+  "type": "enum_value",
+  "key": "VISIBILITYFORM.{areaTagId}",
+  "conditionValue": "testing"
+}
+```
+
+References a configuration value. The key's suffix after the dot is an area tag ID resolvable via `tag/get`.
+
+**7. `boolean_value` condition (checklist-specific — boolean flag):**
+```json
+{
+  "type": "boolean_value",
+  "key": "ACCOUNTINGEST.SigEstCash",
+  "conditionValue": true
+}
+```
+
+Boolean flag condition (e.g. accounting estimate significance). Self-contained key with true/false value.
+
+> For full checklist procedure visibility details, see `caseware-data-checklist-procedures.md`.
+
 ## Section Content Extraction
 
 Content lives in `specification.content` as HTML. Processing steps:

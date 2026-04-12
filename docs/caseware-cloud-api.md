@@ -81,6 +81,7 @@ All endpoints use `POST` with JSON body and return JSON.
 | `procedure/get` | Fetch procedures (checklist questions) |
 | `document/get` | Fetch all documents in an engagement |
 | `tag/get` | Fetch all tags (filter client-side by `subKind`) |
+| `checklist/get` | Fetch checklist objects (includes default settings for procedures) |
 
 ### Session Headers
 
@@ -134,6 +135,19 @@ Always probe for the list inside the response. Recommended approach:
 2. Try known keys: `objects`, `sections`, `items`, `results`, `data`
 3. Scan for any key whose value is a list
 4. Handle single-object wrappers: `{"object": {...}}`
+
+## Checklist URL Fragments
+
+Browser URLs use two fragment patterns for documents:
+- `#/efinancials/{documentId}` — financial statements and other documents
+- `#/checklist/{documentId}` — checklist documents
+
+Both reference the document's `id` field. Procedures use the document's `content` field as their `checklistId`. See `caseware-data-checklist-procedures.md` for the full mapping.
+
+**Regex for both patterns:**
+```
+#/(?:efinancials|checklist)/([^/?\s]+)
+```
 
 ## Error Handling
 

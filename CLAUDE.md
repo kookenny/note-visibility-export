@@ -13,8 +13,13 @@ web/                # Flask web frontend
     index.html      #   Single-page UI
     styles.css      #   Caseware design system CSS
     app.js          #   URL parsing, fetch, download logic
-workflows/          # SOPs
+workflows/          # SOPs + SDK/platform reference docs
   export_note_visibility.md
+  API-Quick-Reference.md, Cloud-SDK-Platform.md, Desktop-SDK-Reference.md,
+  SDK-Overview.md, SE-Authoring-Guide.md, SE-Tutorials-Reference.md,
+  Sherlock-API.md
+docs/               # Caseware domain knowledge (cross-project reuse)
+  caseware-cloud-api.md, caseware-data-*.md, caseware-design-system.md
 .tmp/               # Output files (gitignored, regenerated as needed)
 .env                # Per-environment OAuth credentials (CW_CA_*, CW_US_*, etc.) or CW_COOKIES (gitignored)
 requirements.txt    # Python dependencies
@@ -110,7 +115,7 @@ Key finding: The Hide/Show direction is derived from `visibility.normallyVisible
 - Main endpoint: `POST /api/v1.12.0/section/get` with document filter returns `{"count": N, "objects": [...]}`
 - Section hierarchy: container types (`note`, `heading`, `settings`, `toc`) excluded from `ordered_titled_sections()`; `find_nearest_titled_ancestor()` also skips container types
 - Section content: extracted from `specification.content` HTML field, stripped to plain text; placeholder spans wrapped in `(( ))`; dynamic-text formula spans resolved via section attachables and wrapped in `[[ ]]`; untitled child sections (text bodies) are merged into the parent section's content column
-- Visibility settings: `_effective_visibility()` walks up parent chain to inherit conditions from `[note]` containers; Hide/Show direction derived from `normallyVisible` (false→"Hide when", true→"Show when"); `override` field rarely set to anything other than `"default"`
+- Visibility settings: `_effective_visibility()` walks up parent chain to inherit conditions from `[note]` containers; Hide/Show direction derived from `normallyVisible` (false→"Show when", true→"Hide when"); `override` field rarely set to anything other than `"default"`
 - Condition structure confirmed: top-level `conditions` array contains flat `response` objects, `condition_group` objects (nested OR groups), `organization_type` conditions (entity-level org type), and `consolidation` conditions
 - Components: `section.tagging.component` maps `{categoryId: [tagId]}` → resolved via `tag/get` endpoint filtering for `subKind: "component"`; tag `name` field has the human-readable label (e.g. "NFP")
 

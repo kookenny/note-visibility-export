@@ -89,6 +89,20 @@ Recommended approach for bulk ID resolution:
 
 This lookup dict is then used during row generation to resolve all condition references in O(1).
 
+## Checklist ID Resolution
+
+**Critical**: The `checklistId` on procedures points to the document's **`content` field**, not its `id` field. Additionally, URL fragments (`#/checklist/{id}`) reference the document's `id`. To fetch procedures for a checklist opened via URL:
+
+1. Parse the document `id` from the URL fragment
+2. Look up the document to find its `content` field
+3. Use the `content` field as the `checklistId` filter for `procedure/get`
+
+Build a `{doc_id: content_id}` mapping from `document/get` results for this translation.
+
+### Checklist Default Settings
+
+The `checklist/get` endpoint (empty body) returns checklist objects indexed by their `content` field ID. Each contains a `settings` object with default `responseSets`, `notePlaceholder`, `allowSignOffs`, etc. Procedures without explicit settings inherit these defaults.
+
 ## Self-Contained Condition Types
 
 Not all condition types require API lookups. These are resolved directly from their condition object fields:
