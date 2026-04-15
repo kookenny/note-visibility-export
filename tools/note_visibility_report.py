@@ -400,6 +400,68 @@ def fetch_procedure_by_id(session: requests.Session,
         return None
 
 
+def _fetch_checklist_response_sets(session: requests.Session,
+                                   engagement_id: str,
+                                   checklist_ids: set,
+                                   host: str | None = None,
+                                   tenant: str | None = None) -> dict:
+    """Fetch checklist objects and extract their default responseSets.
+
+    Checklist objects (via checklist/get) carry default response options in
+    ``settings.responseSets[].responses[]`` that individual procedures inherit.
+    Returns a flat ``{responseId: name}`` dict.
+    """
+    host = host or HOST
+    tenant = tenant or TENANT
+    url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/checklist/get"
+    result: dict = {}
+    for cid in checklist_ids:
+        payload = {"filter": {"filter": {
+            "node": "=",
+            "left":  {"node": "field", "kind": "checklist", "field": "id"},
+            "right": {"node": "string", "value": cid},
+        }}}
+        try:
+            resp = session.post(url, json=payload, timeout=30)
+            if not resp.ok:
+                continue
+            for cl in resp.json().get("objects") or []:
+                for rs in (cl.get("settings") or {}).get("responseSets") or []:
+                    for resp_opt in rs.get("responses") or []:
+                        rid = resp_opt.get("id", "")
+                        rname = (resp_opt.get("name", "")
+                                 or (resp_opt.get("names") or {}).get("en", ""))
+                        if rid and rname:
+                            result[rid] = rname
+        except Exception as exc:
+            log.debug("Could not fetch checklist %s: %s", cid, exc)
+    return result
+
+
+def _fetch_procedures_by_checklist(session: requests.Session,
+                                   engagement_id: str,
+                                   checklist_id: str,
+                                   host: str | None = None,
+                                   tenant: str | None = None) -> list[dict]:
+    """Fetch all procedures belonging to a checklist."""
+    host = host or HOST
+    tenant = tenant or TENANT
+    url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/procedure/get"
+    payload = {"filter": {"filter": {
+        "node": "=",
+        "left":  {"node": "field", "kind": "procedure", "field": "checklistId"},
+        "right": {"node": "string", "value": checklist_id},
+    }}}
+    try:
+        resp = session.post(url, json=payload, timeout=30)
+        if not resp.ok:
+            return []
+        return resp.json().get("objects", [])
+    except Exception as exc:
+        log.debug("Could not fetch procedures for checklist %s: %s", checklist_id, exc)
+        return []
+
+
 def fetch_checklist_name(session: requests.Session,
                          engagement_id: str,
                          checklist_id: str,
@@ -567,7 +629,35 @@ def build_id_lookup(session: requests.Session,
             lookup[cid] = name
             log.debug("  Checklist %s → '%s'", cid[:12], name)
 
+    # Fetch checklist-level default responseSets (e.g. Yes/No options that
+    # individual procedures inherit without defining their own responseSets).
+    cl_responses = _fetch_checklist_response_sets(
+        session, engagement_id, checklist_ids, host=host, tenant=tenant)
+    lookup.update(cl_responses)
+    log.info("  %d checklist-level response option(s) resolved", len(cl_responses))
+
+    # Fetch all procedures per checklist to pick up responseSets defined on
+    # sibling procedures (not just the directly-referenced ones).
+    checklist_procs: dict[str, list[dict]] = {}
+    log.info("  Fetching procedures for %d checklist(s) ...", len(checklist_ids))
+    for cid in checklist_ids:
+        procs = _fetch_procedures_by_checklist(session, engagement_id, cid,
+                                               host=host, tenant=tenant)
+        checklist_procs[cid] = procs
+        for proc in procs:
+            for rs in (proc.get("settings") or {}).get("responseSets") or []:
+                for resp_opt in rs.get("responses") or []:
+                    rid  = resp_opt.get("id", "")
+                    rname = resp_opt.get("name", "") or (resp_opt.get("names") or {}).get("en", "")
+                    if rid and rname:
+                        lookup[rid] = rname
+        log.info("    Checklist %s: %d procedures, %d response IDs so far",
+                 cid[:12], len(procs), len(lookup))
+
     for idx, pid in enumerate(procedure_ids, start=1):
+        # Skip procedure name resolution if already covered by checklist fetch
+        if pid in lookup:
+            continue
         proc = fetch_procedure_by_id(session, engagement_id, pid, host=host, tenant=tenant)
         if not proc:
             continue
@@ -590,6 +680,18 @@ def build_id_lookup(session: requests.Session,
 
         if idx % 10 == 0:
             log.info("    ... %d / %d procedures resolved", idx, len(procedure_ids))
+
+    # Also extract procedure names from checklist-fetched procedures
+    for procs in checklist_procs.values():
+        for proc in procs:
+            pid = proc.get("id", "")
+            if pid and pid not in lookup:
+                summary = proc.get("summaryNames") or {}
+                proc_text = summary.get("en", "") or next(iter(summary.values()), "")
+                if not proc_text:
+                    proc_text = strip_html(proc.get("text", ""))
+                if proc_text:
+                    lookup[pid] = proc_text
 
     log.info("  %d names resolved", len(lookup))
     return lookup

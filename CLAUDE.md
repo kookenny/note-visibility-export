@@ -124,7 +124,10 @@ Conditions reference `checklistId`, `procedureId`, `responseId`. Resolution appr
 
 - **Endpoint:** `POST /api/v1.12.0/procedure/get` filtered by `field: "id"`
 - **Procedure name:** `summaryNames.en` or strip HTML from `text` field
-- **Response options (Yes/No etc.):** embedded in `settings.responseSets[].responses[]` on the procedure object — each has `id` and `name`
+- **Response options (Yes/No etc.):** resolved from three sources in priority order:
+  1. Checklist-level defaults: `checklist/get` → `settings.responseSets[].responses[]` — these are the default response sets (e.g. Yes/No) that procedures inherit
+  2. Sibling procedures: `procedure/get` filtered by `checklistId` → any procedure in the same checklist may define `settings.responseSets[].responses[]`
+  3. The referenced procedure itself: `procedure/get` by `id` → `settings.responseSets[].responses[]`
 - **Checklist name (condition group label):** the `checklistId` is itself a procedure ID — fetch it via `procedure/get` filtered by `field: "id"` and read `summaryNames.en` or strip HTML from `text`. Do NOT walk up the `parentId` chain (that returns an ancestor's name, not the checklist's own name).
 
 Key finding: `responseRows` on a procedure has no text — response labels come from `settings.responseSets`, NOT `responseRows`.
@@ -133,7 +136,7 @@ Key finding: `checklistId` values from conditions are NOT document IDs — they 
 
 Key finding: `checklistId.id` in conditions points to the **content ID** of the checklist document, not the document's own `id`. The document object has a `content` field whose value matches the `checklistId`. Resolution: `fetch_document_lookup()` indexes both `doc["id"]` and `doc["content"]` → label, so both map to `"number name"` (e.g. `"6-15 Financial statements optimiser"`).
 
-The `build_id_lookup()` function fetches every unique `procedureId` individually and builds a flat `{id: name}` dict covering both procedure names and response option names.
+The `build_id_lookup()` function builds a flat `{id: name}` dict by: (1) fetching checklist-level default responseSets via `checklist/get`, (2) fetching all procedures per referenced checklist to pick up sibling responseSets, and (3) fetching individually-referenced procedures for their names and any remaining responseSets.
 
 ## Organization Type Conditions
 Conditions with `type: "organization_type"` reference entity-level organization types (e.g. "CCPC", "S-Corporation") set on the Entity in Caseware Collaborate. The condition object is self-contained with these fields:
