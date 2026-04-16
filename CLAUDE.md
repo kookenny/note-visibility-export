@@ -39,7 +39,7 @@ python web/app.py
 The URL field auto-extracts `tenant`, `engagementId`, and `documentId` from the pasted URL. The optional Report Name field controls the download filename.
 
 ## API Details
-- **Platform:** Caseware Cloud (internal), hosted at `https://ca.cwcloudpartner.com`
+- **Platform:** Caseware Cloud (internal), hosted at `https://{region}.cwcloudpartner.com` (CA, US, EU)
 - **Auth:** Per-environment OAuth client credentials (preferred, 30-min token) or cookie-based fallback. Credentials are keyed by hostname prefix: `CW_CA_CLIENT_ID` for `ca.cwcloudpartner.com`, `CW_US_CLIENT_ID` for `us.cwcloudpartner.com`, etc. Falls back to generic `CW_CLIENT_ID` if no prefixed vars exist.
 - **Main endpoint:** `POST /{tenant}/e/eng/{engagementId}/api/v1.12.0/section/get`
 - **Filter pattern to fetch all sections for a document:**
@@ -111,19 +111,19 @@ Key finding: Visibility conditions primarily live on `[note]` container sections
 Key finding: The Hide/Show direction is derived from `visibility.normallyVisible`, NOT from `visibility.override`. `normallyVisible=false` → "Show when" (normally hidden, shows when conditions met; 418/420 note sections); `normallyVisible=true` → "Hide when" (normally visible, hides when conditions met). The `override` field is almost always `"default"` when conditions are present.
 
 ## Confirmed Working
-- Auth: Per-environment OAuth via `CW_{PREFIX}_CLIENT_ID` + `CW_{PREFIX}_CLIENT_SECRET` (e.g. `CW_CA_*`, `CW_US_*`); falls back to generic `CW_CLIENT_ID` + `CW_CLIENT_SECRET`, then to browser cookie string via `CW_COOKIES`
+- Auth: Per-environment OAuth via `CW_{PREFIX}_CLIENT_ID` + `CW_{PREFIX}_CLIENT_SECRET` (e.g. `CW_CA_*`, `CW_US_*`, `CW_EU_*`); falls back to generic `CW_CLIENT_ID` + `CW_CLIENT_SECRET`, then to browser cookie string via `CW_COOKIES`
 - Main endpoint: `POST /api/v1.12.0/section/get` with document filter returns `{"count": N, "objects": [...]}`
 - Section hierarchy: container types (`note`, `heading`, `settings`, `toc`) excluded from `ordered_titled_sections()`; `find_nearest_titled_ancestor()` also skips container types
 - Section content: extracted from `specification.content` HTML field, stripped to plain text; placeholder spans wrapped in `(( ))`; dynamic-text formula spans resolved via section attachables and wrapped in `[[ ]]`; untitled child sections (text bodies) are merged into the parent section's content column
 - Visibility settings: `_effective_visibility()` walks up parent chain to inherit conditions from `[note]` containers; Hide/Show direction derived from `normallyVisible` (false→"Show when", true→"Hide when"); `override` field rarely set to anything other than `"default"`
-- Condition structure confirmed: top-level `conditions` array contains flat `response` objects, `condition_group` objects (nested OR groups), `organization_type` conditions (entity-level org type), and `consolidation` conditions
+- Condition structure confirmed: top-level `conditions` array contains flat `response` objects, `condition_group` objects (nested OR groups), `organization_type` conditions (entity-level org type), `consolidation` conditions, `tag` conditions (financial group), and `language` conditions (content language)
 - Components: `section.tagging.component` maps `{categoryId: [tagId]}` → resolved via `tag/get` endpoint filtering for `subKind: "component"`; tag `name` field has the human-readable label (e.g. "NFP")
 
 ## Condition ID Resolution (confirmed working)
 Conditions reference `checklistId`, `procedureId`, `responseId`. Resolution approach:
 
 - **Endpoint:** `POST /api/v1.12.0/procedure/get` filtered by `field: "id"`
-- **Procedure name:** `summaryNames.en` or strip HTML from `text` field
+- **Procedure name:** `summaryNames.en`, or resolve dynamic-text formulas via `build_formula_map()` + `strip_html(formula_map=...)` from the `text` field (required for EU templates where `summaryNames` is empty and `text` contains only `<span formula="...">` elements with resolved values in `attachables[].calculated`)
 - **Response options (Yes/No etc.):** resolved from three sources in priority order:
   1. Checklist-level defaults: `checklist/get` → `settings.responseSets[].responses[]` — these are the default response sets (e.g. Yes/No) that procedures inherit
   2. Sibling procedures: `procedure/get` filtered by `checklistId` → any procedure in the same checklist may define `settings.responseSets[].responses[]`
@@ -149,6 +149,18 @@ Resolution uses a static `_ORG_TYPE_LABELS` mapping (covers CA and US org types)
 ## Consolidation Conditions
 Conditions with `type: "consolidation"` have a boolean `consolidated` field. Displayed as Condition Name = "Consolidation", Expected Response = "Consolidated" or "Not consolidated".
 
+## Financial Group Conditions (tag)
+Conditions with `type: "tag"` reference trial balance financial tags. The condition object has:
+- `tagId` — `{"id": "..."}` wrapper pointing to a tag with `subKind: "financial"` (resolved via `tag/get`)
+- `threshold` — `"zero"` | `"non_zero"` | `"material"` | `"not_material"`
+- `balanceTypes` — array of `"current_year"` and/or `"prior_year"`
+- `consolidated` — boolean (Consolidated balance vs Parent Entity balance)
+
+Displayed as Condition Name = "Financial Group: {tag name}", Expected Response = "{balance types} / {entity} / {threshold}". Financial tag names resolved via `build_financial_tag_lookup()` which builds a `{tag_id: "number name"}` map from `tag/get` results filtered to `subKind: "financial"`.
+
+## Content Language Conditions (language)
+Conditions with `type: "language"` have a `language` field containing an ISO 639-1 code (e.g. `"en"`, `"sv"`). Displayed as Condition Name = "Content Language", Expected Response = human-readable language name (e.g. "English", "Swedish"). Resolved via a static label mapping — no API call needed.
+
 ## Column Layout (current)
 | # | Column | Source |
 |---|--------|--------|
@@ -159,6 +171,6 @@ Conditions with `type: "consolidation"` have a boolean `consolidated` field. Dis
 | E | Section Content | `specification.content` stripped of HTML; placeholders in `(( ))`, dynamic text in `[[ ]]` |
 | F | Visibility | "Hide when" / "Show when" / "Hide" / "Show" / "Use default settings" — shown only on the first condition row per section |
 | G | Condition Group | checklist name — shown only on the first row of each group |
-| H | Condition Name | procedure name from `summaryNames.en` or stripped `text`; or "Organization Type" / "Consolidation" for entity-level conditions |
-| I | Expected Response | response label from `settings.responseSets[].responses[]`; or org type name / "Consolidated" for entity-level conditions |
+| H | Condition Name | procedure name from `summaryNames.en` or dynamic-text formula; or "Organization Type" / "Consolidation" / "Financial Group: {tag}" / "Content Language" for other condition types |
+| I | Expected Response | response label from `settings.responseSets[].responses[]`; or org type / consolidated / balance threshold / language name for other condition types |
 | J | Components | comma-separated component tag names from `tagging.component` |

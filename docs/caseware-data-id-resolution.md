@@ -18,7 +18,8 @@ All three are wrapper objects: `{"id": "actual-id-string", "authorId": "..."}`. 
 
 **Name extraction priority:**
 1. `summaryNames.en` (preferred — clean text)
-2. Strip HTML from `text` field (fallback — may contain markup)
+2. Resolve dynamic-text formulas via `build_formula_map(proc)` + `strip_html(text, formula_map=fmap)` — required for EU/localized templates where `summaryNames` is empty and `text` contains only `<span formula="...">` elements with resolved values in `attachables[].calculated`
+3. Strip HTML from `text` field (final fallback — may contain markup)
 
 ## Response Option Resolution
 
@@ -114,3 +115,11 @@ The condition object contains `customOrganizationTypeId` (a PascalCase string li
 ### `consolidation`
 
 The condition object contains a boolean `consolidated` field. Displayed as `"Consolidated"` or `"Not consolidated"`. No lookup needed.
+
+### `tag` (financial group)
+
+References a trial balance financial tag via `tagId`. Resolve the tag name via `tag/get` filtered to `subKind: "financial"` (using `build_financial_tag_lookup()`). The remaining fields (`threshold`, `balanceTypes`, `consolidated`) are self-contained display values.
+
+### `language` (content language)
+
+Contains an ISO 639-1 `language` code (e.g. `"en"`, `"sv"`). Resolved to a human-readable name via a static label mapping. No API call needed.

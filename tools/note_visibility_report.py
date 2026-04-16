@@ -276,21 +276,49 @@ def fetch_sections(session: requests.Session,
     return []
 
 
-def fetch_component_lookup(session: requests.Session,
-                           engagement_id: str,
-                           host: str | None = None,
-                           tenant: str | None = None) -> dict[str, str]:
-    """Fetch all tags with subKind='component' and return {tag_id: name} map."""
+def fetch_all_tags(session: requests.Session,
+                   engagement_id: str,
+                   host: str | None = None,
+                   tenant: str | None = None) -> list[dict]:
+    """Fetch all tags in the engagement and return raw tag objects."""
     host = host or HOST
     tenant = tenant or TENANT
     url = f"{host}/{tenant}/e/eng/{engagement_id}/api/v1.12.0/tag/get"
-    log.info("Fetching component tags from %s", url)
+    log.info("Fetching tags from %s", url)
     resp = session.post(url, json={}, timeout=30)
     if not resp.ok:
-        log.warning("tag/get returned %s — skipping components", resp.status_code)
-        return {}
-    tags = resp.json().get("objects", [])
-    return {t["id"]: t.get("name", "") for t in tags if t.get("subKind") == "component"}
+        log.warning("tag/get returned %s — skipping tags", resp.status_code)
+        return []
+    return resp.json().get("objects", [])
+
+
+def fetch_component_lookup(session: requests.Session,
+                           engagement_id: str,
+                           host: str | None = None,
+                           tenant: str | None = None,
+                           all_tags: list[dict] | None = None) -> dict[str, str]:
+    """Return {tag_id: name} map for tags with subKind='component'.
+
+    If *all_tags* is provided, filters from that list instead of making
+    an additional API call.
+    """
+    if all_tags is None:
+        all_tags = fetch_all_tags(session, engagement_id, host=host, tenant=tenant)
+    return {t["id"]: t.get("name", "") for t in all_tags if t.get("subKind") == "component"}
+
+
+def build_financial_tag_lookup(all_tags: list[dict]) -> dict[str, str]:
+    """Return {tag_id: name} map for tags with subKind='financial'."""
+    result = {}
+    for t in all_tags:
+        if t.get("subKind") == "financial":
+            name = t.get("name", "")
+            names = t.get("names") or {}
+            label = name or names.get("en", "") or next(iter(names.values()), "")
+            number = t.get("number", "")
+            if label:
+                result[t["id"]] = f"{number} {label}".strip() if number else label
+    return result
 
 
 def build_section_components(sections: list[dict],
@@ -391,9 +419,13 @@ def fetch_procedure_by_id(session: requests.Session,
     try:
         resp = session.post(url, json=payload, timeout=15)
         if not resp.ok:
+            log.warning("  procedure/get by id %s: HTTP %d — %s",
+                        procedure_id[:12], resp.status_code, resp.text[:200])
             return None
         data = resp.json()
         objects = data.get("objects", [])
+        if not objects:
+            log.debug("  procedure/get by id %s: 200 OK but 0 objects", procedure_id[:12])
         return objects[0] if objects else None
     except Exception as exc:
         log.debug("Could not fetch procedure %s: %s", procedure_id, exc)
@@ -424,8 +456,12 @@ def _fetch_checklist_response_sets(session: requests.Session,
         try:
             resp = session.post(url, json=payload, timeout=30)
             if not resp.ok:
+                log.warning("  checklist/get %s: HTTP %d — %s",
+                            cid[:12], resp.status_code, resp.text[:200])
                 continue
-            for cl in resp.json().get("objects") or []:
+            cl_objects = resp.json().get("objects") or []
+            log.debug("  checklist/get %s: %d object(s)", cid[:12], len(cl_objects))
+            for cl in cl_objects:
                 for rs in (cl.get("settings") or {}).get("responseSets") or []:
                     for resp_opt in rs.get("responses") or []:
                         rid = resp_opt.get("id", "")
@@ -455,8 +491,13 @@ def _fetch_procedures_by_checklist(session: requests.Session,
     try:
         resp = session.post(url, json=payload, timeout=30)
         if not resp.ok:
+            log.warning("  procedures-by-checklist %s: HTTP %d — %s",
+                        checklist_id[:12], resp.status_code, resp.text[:200])
             return []
-        return resp.json().get("objects", [])
+        objects = resp.json().get("objects", [])
+        if not objects:
+            log.debug("  procedures-by-checklist %s: 200 OK but 0 objects", checklist_id[:12])
+        return objects
     except Exception as exc:
         log.debug("Could not fetch procedures for checklist %s: %s", checklist_id, exc)
         return []
@@ -483,7 +524,8 @@ def fetch_checklist_name(session: requests.Session,
         summary = proc.get("summaryNames") or {}
         name = summary.get("en", "") or next(iter(summary.values()), "")
         if not name:
-            name = strip_html(proc.get("text", ""))
+            fmap = build_formula_map(proc)
+            name = strip_html(proc.get("text", ""), formula_map=fmap)
         if name:
             number = proc.get("number", "")
             return f"{number} {name}".strip() if number else name
@@ -560,7 +602,8 @@ def fetch_checklist_name(session: requests.Session,
     summary = current.get("summaryNames") or {}
     name = summary.get("en", "") or next(iter(summary.values()), "")
     if not name:
-        name = strip_html(current.get("text", ""))
+        fmap = build_formula_map(current)
+        name = strip_html(current.get("text", ""), formula_map=fmap)
     return name
 
 
@@ -666,7 +709,8 @@ def build_id_lookup(session: requests.Session,
         summary = proc.get("summaryNames") or {}
         proc_text = summary.get("en", "") or next(iter(summary.values()), "")
         if not proc_text:
-            proc_text = strip_html(proc.get("text", ""))
+            fmap = build_formula_map(proc)
+            proc_text = strip_html(proc.get("text", ""), formula_map=fmap)
         if pid and proc_text:
             lookup[pid] = proc_text
 
@@ -689,11 +733,32 @@ def build_id_lookup(session: requests.Session,
                 summary = proc.get("summaryNames") or {}
                 proc_text = summary.get("en", "") or next(iter(summary.values()), "")
                 if not proc_text:
-                    proc_text = strip_html(proc.get("text", ""))
+                    fmap = build_formula_map(proc)
+                    proc_text = strip_html(proc.get("text", ""), formula_map=fmap)
                 if proc_text:
                     lookup[pid] = proc_text
 
     log.info("  %d names resolved", len(lookup))
+
+    # Collect all response IDs referenced in conditions
+    response_ids: set = set()
+    for s in sections:
+        for cond in (s.get("visibility") or {}).get("conditions") or []:
+            _collect_response_ids_from_cond(cond, response_ids)
+
+    # Report any IDs that remain unresolved, broken down by type
+    unresolved_proc = [uid for uid in procedure_ids if uid not in lookup]
+    unresolved_cl   = [uid for uid in checklist_ids if uid not in lookup]
+    unresolved_resp = [uid for uid in response_ids if uid not in lookup]
+    if unresolved_proc:
+        log.warning("  %d UNRESOLVED procedure ID(s): %s",
+                    len(unresolved_proc), [uid[:12] for uid in unresolved_proc])
+    if unresolved_cl:
+        log.warning("  %d UNRESOLVED checklist ID(s): %s",
+                    len(unresolved_cl), [uid[:12] for uid in unresolved_cl])
+    if unresolved_resp:
+        log.warning("  %d UNRESOLVED response ID(s): %s",
+                    len(unresolved_resp), [uid[:12] for uid in unresolved_resp])
     return lookup
 
 
@@ -713,6 +778,15 @@ def _collect_checklist_ids_from_cond(cond: dict, ids: set) -> None:
         ids.add(cid)
     for sub in cond.get("conditions") or []:
         _collect_checklist_ids_from_cond(sub, ids)
+
+
+def _collect_response_ids_from_cond(cond: dict, ids: set) -> None:
+    """Recursively collect responseId values from a condition."""
+    rid = (cond.get("responseId") or {}).get("id")
+    if rid:
+        ids.add(rid)
+    for sub in cond.get("conditions") or []:
+        _collect_response_ids_from_cond(sub, ids)
 
 
 # ── TREE BUILDING ─────────────────────────────────────────────────────────────
@@ -1074,6 +1148,59 @@ def _flatten_conditions(conditions: list, lookup: dict,
             label = "Consolidated" if consolidated else "Not consolidated"
             rows.append((group_label, "Consolidation", label, is_group))
 
+        elif ctype == "tag":
+            # Financial group condition — references a trial balance tag
+            tag_name = _resolve(lookup, cond.get("tagId"))
+            threshold = cond.get("threshold", "")
+            balance_types = cond.get("balanceTypes") or []
+            consolidated = cond.get("consolidated", True)
+
+            threshold_labels = {
+                "zero": "Is zero",
+                "non_zero": "Is non-zero",
+                "material": "Is material",
+                "not_material": "Is not material",
+            }
+            balance_label = ", ".join(
+                bt.replace("_", " ").title() for bt in balance_types
+            )
+            entity_label = "Consolidated" if consolidated else "Parent Entity"
+            parts = [p for p in [
+                balance_label,
+                entity_label,
+                threshold_labels.get(threshold, threshold),
+            ] if p]
+            response = " / ".join(parts)
+            rows.append((group_label, f"Financial Group: {tag_name}", response, is_group))
+
+        elif ctype == "language":
+            # Content language condition — language code is in the condition itself
+            lang_code = cond.get("language", "")
+            _LANGUAGE_LABELS = {
+                "en": "English",
+                "fr": "French",
+                "sv": "Swedish",
+                "de": "German",
+                "nl": "Dutch",
+                "es": "Spanish",
+                "pt": "Portuguese",
+                "it": "Italian",
+                "da": "Danish",
+                "nb": "Norwegian",
+                "fi": "Finnish",
+                "pl": "Polish",
+                "cs": "Czech",
+                "ro": "Romanian",
+                "hu": "Hungarian",
+                "bg": "Bulgarian",
+                "el": "Greek",
+                "zh": "Chinese",
+                "ja": "Japanese",
+                "ko": "Korean",
+            }
+            lang_name = _LANGUAGE_LABELS.get(lang_code, lang_code)
+            rows.append((group_label, "Content Language", lang_name, is_group))
+
         else:
             # Unknown condition type — show raw type so nothing is silently dropped
             rows.append((group_label, ctype, json.dumps(cond)[:80], is_group))
@@ -1301,7 +1428,9 @@ def generate_report_bytes(
             children_by_parent.setdefault(pid, []).append(s)
 
     lookup = build_id_lookup(session, engagement_id, sections, host=host, tenant=tenant)
-    component_lookup = fetch_component_lookup(session, engagement_id, host=host, tenant=tenant)
+    all_tags = fetch_all_tags(session, engagement_id, host=host, tenant=tenant)
+    lookup.update(build_financial_tag_lookup(all_tags))
+    component_lookup = fetch_component_lookup(session, engagement_id, all_tags=all_tags)
     section_components = build_section_components(sections, component_lookup)
     note_numbers = compute_note_numbers(sections)
 
@@ -1606,8 +1735,10 @@ def main() -> None:
             }
         else:
             lookup = build_id_lookup(session, engagement_id, sections)
+            all_tags = fetch_all_tags(session, engagement_id)
+            lookup.update(build_financial_tag_lookup(all_tags))
             log.info("  %d names resolved", len(lookup))
-            component_lookup = fetch_component_lookup(session, engagement_id)
+            component_lookup = fetch_component_lookup(session, engagement_id, all_tags=all_tags)
             section_components = build_section_components(sections, component_lookup)
             log.info("  %d sections have components", len(section_components))
 

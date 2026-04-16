@@ -162,7 +162,30 @@ References the entity's organization type set in Caseware Collaborate (Edit Enti
 
 Boolean condition based on whether the entity is a consolidated entity. Self-contained — no API lookup needed.
 
-**5. `rmm_rank` condition (checklist-specific — RMM assessment):**
+**5. `tag` condition (financial group — trial balance data):**
+```json
+{
+  "type": "tag",
+  "tagId": {"id": "financial-tag-id"},
+  "threshold": "non_zero",
+  "balanceTypes": ["current_year", "prior_year"],
+  "consolidated": true
+}
+```
+
+References a trial balance financial tag (`tagId` with `subKind: "financial"`, resolved via `tag/get`). `threshold` is `"zero"` | `"non_zero"` | `"material"` | `"not_material"`. `balanceTypes` selects which periods to check. `consolidated` toggles between consolidated balance and parent entity balance. Common in EU templates.
+
+**6. `language` condition (content language):**
+```json
+{
+  "type": "language",
+  "language": "en"
+}
+```
+
+Self-contained condition matching the engagement's content language. The `language` field is an ISO 639-1 code (e.g. `"en"`, `"sv"`, `"fr"`). Resolved via a static label mapping — no API call needed. Common in EU templates with multi-language support.
+
+**7. `rmm_rank` condition (checklist-specific — RMM assessment):**
 ```json
 {
   "type": "rmm_rank",
@@ -175,7 +198,7 @@ Boolean condition based on whether the entity is a consolidated entity. Self-con
 
 Risk of Material Misstatement rank condition. References a financial statement area (`tagId`, subKind=`area`) and baseassertion tags (`assertionIds`, subKind=`baseassertion`). Resolve via `tag/get`. `rmm` is `"low"` | `"medium"` | `"high"`. `operator` is `"ge"` (>=) | `"gt"` (>) | `"eq"` (=). Found on checklist procedures, not note sections.
 
-**6. `enum_value` condition (checklist-specific — visibility form):**
+**8. `enum_value` condition (checklist-specific — visibility form):**
 ```json
 {
   "type": "enum_value",
@@ -186,7 +209,7 @@ Risk of Material Misstatement rank condition. References a financial statement a
 
 References a configuration value. The key's suffix after the dot is an area tag ID resolvable via `tag/get`.
 
-**7. `boolean_value` condition (checklist-specific — boolean flag):**
+**9. `boolean_value` condition (checklist-specific — boolean flag):**
 ```json
 {
   "type": "boolean_value",

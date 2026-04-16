@@ -52,6 +52,12 @@ The `name` field contains the human-readable label.
 
 Components appear as a single comma-separated string in the report's Components column, providing at-a-glance visibility into which content applies to which entity types.
 
+## Financial Tag Lookup
+
+Tags with `subKind: "financial"` represent trial balance line items (e.g. "Cash & cash equivalents"). They are referenced in `tag`-type visibility conditions (financial group conditions). The `build_financial_tag_lookup()` function builds a `{tag_id: "number name"}` map from `tag/get` results filtered to `subKind: "financial"`, using `name`, `names.en`, or first available language value, prefixed with the tag's `number` field if present.
+
+To avoid duplicate API calls, `fetch_all_tags()` fetches all tags once and the result is shared between `fetch_component_lookup()` and `build_financial_tag_lookup()`.
+
 ## Other Tag SubKinds
 
 The `tag/get` endpoint returns tags with various `subKind` values beyond `"component"`:
