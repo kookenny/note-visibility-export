@@ -227,10 +227,47 @@ Boolean flag condition (e.g. accounting estimate significance). Self-contained k
 Content lives in `specification.content` as HTML. Processing steps:
 
 1. **Placeholder spans**: `<span placeholder="...">text</span>` -> wrap in `(( ))` -> `((text))`
-2. **Dynamic-text formula spans**: `<span formula="refId">...</span>` -> resolve `refId` via `section.attachables[refId].calculated` -> wrap in `[[ ]]` -> `[[value]]`
+2. **Dynamic-text formula spans**: `<span formula="refId">...</span>` -> resolve `refId` via `section.attachables[refId].calculated` -> wrap in `[[ ]]` -> `[[value]]`. Use a visible placeholder like `[[?]]` when the attachable's `calculated` is empty (conditions not met) so the gap stays discoverable in output.
 3. **Strip remaining HTML tags** (replace with space)
 4. **Unescape HTML entities** (`&amp;` -> `&`, `&#160;` -> space)
 5. **Collapse whitespace** to single spaces
+
+### Formula Attachable Shape
+
+An attachable referenced from a `<span formula="refId">` (where `attachable.referenceId == refId`) is a `kind: "calculation"` object with two flavours:
+
+**A. Local conditional formulas** (per-procedure/section): a `values[]` array listing condition/output pairs. Example:
+```json
+{
+  "kind": "calculation",
+  "referenceId": "<ref>",
+  "formulaResultIds": ["<condition-id>"],
+  "calculated": "and common controls",    // resolved value for current engagement
+  "values": [
+    {"condition": {"type": "response", "checklistId": {...},
+                   "procedureId": {...}, "responseId": {...}},
+     "value": "\"\u00a0and common controls\""},
+    {"condition": {"type": "consolidation", "consolidated": true,
+                   "overrideTarget": {"id": "...", "kind": "document"}},
+     "value": "\", common controls and controls over the consolidation process\""},
+    {"condition": {"type": "always_true"}, "value": "\"\""}
+  ]
+}
+```
+- `values` is ordered; runtime picks the first condition that matches, falling back to `always_true`.
+- Value strings are JSON-quoted — parse with `json.loads` then trim NBSP/whitespace.
+- Condition types mirror visibility: `response`, `consolidation`, `always_true`. Also `organization_type` for wording-term calculations.
+
+**B. Global glossary references**: a `formula` string pointing at a wording tag:
+```json
+{
+  "kind": "calculation",
+  "formula": "wording(\"@LlP1mos5SEG1OSGQRmGdNg\")",  // may be nested: sentencecase(wording(...))
+  "calculated": "ASPE"
+}
+```
+- The `@<tag_id>` references a tag with `subKind: "wording"` — see `caseware-data-components-tags.md` for the full glossary term structure (conditions, group headers, etc.).
+- Extract the tag ID via `r'wording\("@([^"]+)"\)'` and look up the full definition in the wording-tag collection.
 
 ### Untitled Child Section Merging
 

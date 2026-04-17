@@ -84,3 +84,62 @@ Procedure assertions are stored via `baseassertion` tags, NOT via `assertion` ta
 ### Area Tags
 
 Area tags (subKind=`area`) represent financial statement areas like "Cash & cash equivalents". They are referenced in `rmm_rank` visibility conditions as `tagId` and in `enum_value` conditions as part of the key string. Resolve via `tag/get`.
+
+### Wording (Glossary) Tags
+
+Tags with `subKind: "wording"` are **global glossary terms** — the "dynamic text" chips authors see in the UI under "Term Settings". They are referenced from procedure/section HTML via `<span formula="refId">` where the corresponding attachable's `formula` field reads `wording("@<tag_id>")` (may be nested, e.g. `sentencecase(wording("@<tag_id>"))`).
+
+**There is no dedicated endpoint.** Glossary data lives inside the generic tag model. Queries to `glossary/get`, `term/get`, `wording/get`, etc. return 500 or empty. Fetch via:
+
+```json
+POST tag/get
+{"filter": {"filter": {
+  "node": "=",
+  "left":  {"node": "field", "kind": "tag", "field": "subKind"},
+  "right": {"node": "string", "value": "wording"}
+}}}
+```
+
+**Tag shape:**
+
+```json
+{
+  "id": "LlP1mos5SEG1OSGQRmGdNg",
+  "subKind": "wording",
+  "kind": "tag",
+  "name": "Terminology changes based on accounting framework used (acronym)",
+  "names": {"en": "..."},
+  "parent": "K9T61nbzRoCQY5Q7Jlt_yw",   // another wording tag = group header
+  "category": "h5eAhvLCMU-oStkZaaIpxA", // NOT a tag; don't resolve via tag/get
+  "attachables": {
+    "<att-id>": {
+      "kind": "calculation",
+      "referenceId": "...",
+      "formula": "wording(\"@...\")",
+      "calculated": "ASPE",
+      "values": [
+        {"condition": { "type": "organization_type", "organizationType": "not_for_profit",
+                        "customOrganizationTypeId": "RegisteredCharity", "countryCode": "CA"},
+         "value": "\"ASNPO\""},
+        {"condition": {"type": "always_true"}, "value": "\"ASPE\""}
+      ],
+      "languageValues": [ ... ]  // same shape, values are {en: "..."} maps
+    }
+  }
+}
+```
+
+**Group header tags:** A tag whose `parent` field points back at another wording tag treats that parent as a UI group (e.g. "Accounting framework" is the parent of "Terminology changes..."). Group-header tags typically have no meaningful `values` — they exist only to label a group in the UI.
+
+**Value parsing:** The `value` strings in `values[]` are JSON-quoted; use `json.loads(raw)` then strip NBSP/whitespace. An empty JSON string (`"\"\""`) means no text is emitted when that condition matches — use a placeholder like `"[[?]]"` or `(empty)` in output.
+
+**Condition types in wording tags:**
+
+| Type | Notes |
+|------|-------|
+| `organization_type` | Fields: `organizationType`, `customOrganizationTypeId`, `countryCode`. Used almost exclusively in wording terms (not typical for procedure visibility). |
+| `always_true` | Fallback/default value. Last entry in `values[]`. |
+| `response` | Same shape as visibility response conditions (`checklistId`/`procedureId`/`responseId`). Resolve via the same `_format_response_condition` helper. |
+| `consolidation` | Same as visibility consolidation conditions. |
+
+**Formula-to-term extraction**: regex `r'wording\("@([^"]+)"\)'` on the attachable's `formula` string pulls the `<tag_id>` (leading `@` is not part of the tag ID).

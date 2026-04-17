@@ -271,3 +271,25 @@ Multiple `rmm_rank` conditions with the same area/level/operator but different a
 ```
 - `key` → dot-separated identifier (e.g. accounting estimate significance)
 - `conditionValue` → `true` or `false`
+
+## Dynamic Text (Formulas)
+
+Procedure `text` HTML may contain `<span formula="refId">` placeholders that the UI renders as "dynamic text" or "Formula" chips. The resolved value for the current engagement is in `proc.attachables[refId].calculated`; the full expression/rules live in the same attachable.
+
+Two flavours of formula attachable appear on procedures:
+
+1. **Local conditional formulas** — the attachable has a `values[]` array with condition/output pairs. Condition types mirror visibility (`response`, `consolidation`, `always_true`). When no condition matches, `calculated` is an empty string and the chip renders blank in the UI.
+2. **Global glossary references** — the attachable has a `formula` field like `wording("@<tag_id>")` (optionally wrapped, e.g. `sentencecase(wording("@<tag_id>"))`). The referenced tag is a glossary term with `subKind: "wording"` — fetch via `tag/get` filtered on `subKind=wording` (see `caseware-data-components-tags.md`).
+
+Full data shape for both flavours is documented in `caseware-data-sections-visibility.md` under "Formula Attachable Shape" — procedures share the same structure as sections.
+
+**Build a formula map** for inline rendering:
+
+```python
+def build_formula_map(proc):
+    return {a["referenceId"]: a["calculated"].strip()
+            for a in (proc.get("attachables") or {}).values()
+            if a.get("referenceId") and (a.get("calculated") or "").strip()}
+```
+
+Then wrap `<span formula="X">` occurrences with `[[value]]` (or `[[?]]` if the value is empty) during HTML stripping so the gap stays visible.
