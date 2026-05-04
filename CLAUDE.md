@@ -3,6 +3,8 @@
 ## Project Purpose
 One-time snapshot tool that extracts note/subnote visibility settings from Caseware Cloud Smart Engagements (SE) author templates and writes them to an Excel spreadsheet.
 
+> Also accessible via the unified [SE Export Tool](https://github.com/kookenny/SE-export-tool) (sibling folder `../SE export tool/`), which hosts this and three other exporters behind a tabbed UI. That tool imports `tools/note_visibility_report.py` from here live — this project remains the source of truth.
+
 ## Project Structure
 ```
 tools/              # Python scripts
